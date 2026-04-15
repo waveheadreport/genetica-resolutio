@@ -191,23 +191,27 @@ function askSexThenAnalyze() {
         A few quick questions so findings and recommendations are relevant. You can change
         these later — they only affect filtering, never the underlying analysis.
       </p>
+      <div class="pre-privacy">
+        🔒 These answers stay on your device alongside your DNA data. They're only used
+        locally to filter and match results — never uploaded or shared.
+      </div>
       <div class="pre-group">
-        <div class="pre-group-label">Biological sex</div>
-        <div class="sex-opts">
-          <button class="sex-opt" data-sex="female">♀ Female</button>
-          <button class="sex-opt" data-sex="male">♂ Male</button>
-          <button class="sex-opt" data-sex="any">⚥ Prefer not to say</button>
+        <div class="pre-group-label">Gender</div>
+        <div class="pre-opts">
+          <button class="pre-opt" data-sex="female">♀ Female</button>
+          <button class="pre-opt" data-sex="male">♂ Male</button>
+          <button class="pre-opt" data-sex="any">⚥ Prefer not to say</button>
         </div>
       </div>
       <div class="pre-group">
         <div class="pre-group-label">Genetic ancestry (best rough match)</div>
-        <div class="sex-opts">
-          <button class="anc-opt" data-anc="eur">European</button>
-          <button class="anc-opt" data-anc="afr">African</button>
-          <button class="anc-opt" data-anc="eas">East Asian</button>
-          <button class="anc-opt" data-anc="sas">South Asian</button>
-          <button class="anc-opt" data-anc="amr">Admixed American</button>
-          <button class="anc-opt" data-anc="any">Prefer not to say</button>
+        <div class="pre-opts">
+          <button class="pre-opt anc-opt" data-anc="eur">European</button>
+          <button class="pre-opt anc-opt" data-anc="afr">African</button>
+          <button class="pre-opt anc-opt" data-anc="eas">East Asian</button>
+          <button class="pre-opt anc-opt" data-anc="sas">South Asian</button>
+          <button class="pre-opt anc-opt" data-anc="amr">Admixed American</button>
+          <button class="pre-opt anc-opt" data-anc="any">Prefer not to say</button>
         </div>
         <div class="pre-note">
           Most GWAS effect sizes come from European cohorts. For non-European ancestry,
@@ -222,17 +226,17 @@ function askSexThenAnalyze() {
   let pickedSex = null, pickedAnc = null;
   const continueBtn = modal.querySelector('#pre-continue');
   const refresh = () => { continueBtn.disabled = !(pickedSex && pickedAnc); };
-  modal.querySelectorAll('.sex-opt').forEach(btn => {
+  modal.querySelectorAll('.pre-opt[data-sex]').forEach(btn => {
     btn.addEventListener('click', () => {
-      modal.querySelectorAll('.sex-opt').forEach(b => b.classList.remove('selected'));
+      modal.querySelectorAll('.pre-opt[data-sex]').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
       pickedSex = btn.dataset.sex;
       refresh();
     });
   });
-  modal.querySelectorAll('.anc-opt').forEach(btn => {
+  modal.querySelectorAll('.pre-opt[data-anc]').forEach(btn => {
     btn.addEventListener('click', () => {
-      modal.querySelectorAll('.anc-opt').forEach(b => b.classList.remove('selected'));
+      modal.querySelectorAll('.pre-opt[data-anc]').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
       pickedAnc = btn.dataset.anc;
       refresh();
@@ -1449,33 +1453,80 @@ async function loadSessionsTab() {
 }
 async function saveCurrentSession() {
   if (!analysisResult) return;
+  const btn = document.querySelector('[data-action="saveCurrentSession"]');
+  const orig = btn ? btn.textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Saving…';
+    btn.style.opacity = '0.7';
+  }
+  showToast('Saving session…', 'info', 0);
   try {
     const name = fileIdent ? fileIdent.split('|')[0] : 'analysis';
     await SaveSession(analysisResult, name);
-    const btn = document.querySelector('[data-action="saveCurrentSession"]');
+    hideToast();
+    showToast('✓ Session saved', 'ok', 2500);
     if (btn) {
-      const orig = btn.textContent;
       btn.textContent = '✓ Saved';
-      setTimeout(() => { btn.textContent = orig; }, 2000);
+      setTimeout(() => {
+        btn.textContent = orig;
+        btn.disabled = false;
+        btn.style.opacity = '';
+      }, 2500);
     }
   } catch (e) {
+    hideToast();
     console.error('SaveSession failed:', e);
-    alert('Failed to save session: ' + e);
+    showToast('Failed to save session', 'error', 4000);
+    if (btn) { btn.textContent = orig; btn.disabled = false; btn.style.opacity = ''; }
   }
 }
 async function openSession(id) {
+  // Render a loading screen immediately so the UI doesn't look frozen while
+  // the (potentially large) session JSON is deserialised on the backend.
+  document.getElementById('app').innerHTML = `
+    <div id="progress-screen" class="progress-screen">
+      <div class="progress-content">
+        <div class="prog-helix">🧬</div>
+        <div class="prog-title">Loading Saved Session</div>
+        <div class="prog-subtitle">Deserialising report from disk…</div>
+        <div class="prog-bar-wrap">
+          <div class="prog-bar"><div class="prog-fill" style="width:100%;animation: pulseBar 1.2s ease-in-out infinite"></div></div>
+        </div>
+        <div class="prog-label">Reading</div>
+        <div class="prog-text">This can take a few seconds for large reports.</div>
+      </div>
+    </div>`;
   try {
     const result = await LoadSession(id);
     analysisResult = result;
     fileIdent = (result.parsed?.provider || 'session') + '|0';
-    // Opening a saved session bypasses the sex/ancestry prompt — we don't
-    // know the user's intent for that view, so default to "show everything".
     analysisSex = 'any'; chosenSex = 'any'; analysisAncestry = 'any';
     renderReport('overview');
   } catch (e) {
     console.error('LoadSession failed:', e);
-    alert('Failed to open session: ' + e);
+    document.getElementById('app').innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:16px">
+        <div style="color:var(--red);font-size:18px">Failed to load session</div>
+        <div style="color:var(--ink2);font-size:13px;max-width:400px;text-align:center">${h(String(e))}</div>
+        <button class="btn-primary" data-action="reload">Back to Home</button>
+      </div>`;
   }
+}
+
+// ── TOAST ────────────────────────────────────────────────────────────────────
+function showToast(msg, kind = 'info', autoHideMs = 0) {
+  hideToast();
+  const t = document.createElement('div');
+  t.id = 'gr-toast';
+  t.className = `gr-toast gr-toast-${kind}`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  if (autoHideMs > 0) setTimeout(hideToast, autoHideMs);
+}
+function hideToast() {
+  const t = document.getElementById('gr-toast');
+  if (t) t.remove();
 }
 async function confirmDeleteSession(id) {
   try {

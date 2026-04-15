@@ -1003,25 +1003,41 @@ a:hover { opacity: 0.8; }
 /* ── NEW FEATURE STYLES ─────────────────────────────────────────────────── */
 
 /* Pre-analysis modal extra groups */
-.pre-group { margin: 18px 0 8px; text-align: left; }
+.pre-privacy {
+  font-size: 11px; color: var(--ink2); line-height: 1.6;
+  padding: 10px 12px; margin: 8px 0 20px;
+  background: rgba(77,255,145,0.05);
+  border-left: 2px solid var(--accent);
+  border-radius: 3px;
+  text-align: left;
+}
+.pre-group { margin: 20px 0 8px; text-align: left; }
 .pre-group-label {
   font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px;
   color: var(--muted); margin-bottom: 10px;
+  text-align: center;
 }
 .pre-note {
   font-size: 11px; color: var(--muted); margin-top: 10px; line-height: 1.5;
   padding: 8px 10px; border-left: 2px solid var(--border2); background: rgba(255,255,255,0.02);
 }
 .pre-actions { display: flex; justify-content: flex-end; margin-top: 18px; }
-.sex-opt, .anc-opt {
-  display: inline-block; padding: 8px 14px; margin: 4px;
+.pre-opts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.pre-opt {
+  padding: 10px 12px;
   background: var(--bg); color: var(--ink);
   border: 1px solid var(--border); border-radius: 4px;
   font-family: inherit; font-size: 12px; cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
+  text-align: center;
+  min-width: 0;
 }
-.sex-opt:hover, .anc-opt:hover { border-color: var(--accent); }
-.sex-opt.selected, .anc-opt.selected {
+.pre-opt:hover { border-color: var(--accent); }
+.pre-opt.selected {
   background: var(--accent); color: var(--bg); border-color: var(--accent);
 }
 
@@ -1180,4 +1196,26 @@ a:hover { opacity: 0.8; }
 .compare-head {
   font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px;
   color: var(--muted); background: var(--bg);
+}
+
+/* Toast */
+.gr-toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  padding: 12px 20px; border-radius: 4px;
+  background: var(--bg2); color: var(--ink);
+  border: 1px solid var(--border2);
+  font-size: 13px; z-index: 9999;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  animation: toastIn 0.2s ease-out;
+}
+.gr-toast-ok    { border-color: var(--accent); color: var(--accent); }
+.gr-toast-error { border-color: var(--red);    color: var(--red); }
+.gr-toast-info  { border-color: var(--border2); }
+@keyframes toastIn {
+  from { opacity: 0; transform: translate(-50%, 10px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes pulseBar {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
 }
