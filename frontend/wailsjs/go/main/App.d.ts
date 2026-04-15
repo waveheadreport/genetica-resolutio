@@ -7,7 +7,13 @@ export function AnalyzeFile(arg1:string):Promise<backend.AnalysisResult>;
 
 export function CancelDownload(arg1:string):Promise<void>;
 
+export function CheckDatabaseUpdates():Promise<Record<string, backend.SourceUpdateInfo>>;
+
+export function CompareFiles(arg1:string,arg2:string):Promise<backend.ComparisonResult>;
+
 export function DeleteDatabase(arg1:string):Promise<void>;
+
+export function DeleteSession(arg1:string):Promise<void>;
 
 export function DownloadDatabase(arg1:string):Promise<void>;
 
@@ -17,6 +23,14 @@ export function GetDatabaseSources():Promise<Array<main.DatabaseSource>>;
 
 export function GetFileInfo(arg1:string):Promise<Record<string, any>>;
 
+export function ListSessions():Promise<Array<backend.SessionMeta>>;
+
+export function LoadSession(arg1:string):Promise<backend.AnalysisResult>;
+
+export function LookupRSID(arg1:string):Promise<Array<backend.SNPRecord>>;
+
 export function OpenFileDialog():Promise<string>;
 
 export function SaveReport(arg1:string):Promise<string>;
+
+export function SaveSession(arg1:backend.AnalysisResult,arg2:string):Promise<string>;

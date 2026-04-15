@@ -10,8 +10,20 @@ export function CancelDownload(arg1) {
   return window['go']['main']['App']['CancelDownload'](arg1);
 }
 
+export function CheckDatabaseUpdates() {
+  return window['go']['main']['App']['CheckDatabaseUpdates']();
+}
+
+export function CompareFiles(arg1, arg2) {
+  return window['go']['main']['App']['CompareFiles'](arg1, arg2);
+}
+
 export function DeleteDatabase(arg1) {
   return window['go']['main']['App']['DeleteDatabase'](arg1);
+}
+
+export function DeleteSession(arg1) {
+  return window['go']['main']['App']['DeleteSession'](arg1);
 }
 
 export function DownloadDatabase(arg1) {
@@ -30,10 +42,26 @@ export function GetFileInfo(arg1) {
   return window['go']['main']['App']['GetFileInfo'](arg1);
 }
 
+export function ListSessions() {
+  return window['go']['main']['App']['ListSessions']();
+}
+
+export function LoadSession(arg1) {
+  return window['go']['main']['App']['LoadSession'](arg1);
+}
+
+export function LookupRSID(arg1) {
+  return window['go']['main']['App']['LookupRSID'](arg1);
+}
+
 export function OpenFileDialog() {
   return window['go']['main']['App']['OpenFileDialog']();
 }
 
 export function SaveReport(arg1) {
   return window['go']['main']['App']['SaveReport'](arg1);
+}
+
+export function SaveSession(arg1, arg2) {
+  return window['go']['main']['App']['SaveSession'](arg1, arg2);
 }

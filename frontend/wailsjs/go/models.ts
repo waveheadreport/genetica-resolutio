@@ -194,6 +194,81 @@ export namespace backend {
 		    return a;
 		}
 	}
+	export class ComparisonRow {
+	    rsid: string;
+	    gene: string;
+	    trait: string;
+	    cat: string;
+	    a1Geno: string;
+	    a2Geno: string;
+	    a1Status: string;
+	    a2Status: string;
+	    riskAllele: string;
+	    notes: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ComparisonRow(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.rsid = source["rsid"];
+	        this.gene = source["gene"];
+	        this.trait = source["trait"];
+	        this.cat = source["cat"];
+	        this.a1Geno = source["a1Geno"];
+	        this.a2Geno = source["a2Geno"];
+	        this.a1Status = source["a1Status"];
+	        this.a2Status = source["a2Status"];
+	        this.riskAllele = source["riskAllele"];
+	        this.notes = source["notes"];
+	    }
+	}
+	export class ComparisonResult {
+	    a: ParseResult;
+	    b: ParseResult;
+	    commonSNPs: number;
+	    identical: number;
+	    differ: number;
+	    onlyA: number;
+	    onlyB: number;
+	    rows: ComparisonRow[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ComparisonResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.a = this.convertValues(source["a"], ParseResult);
+	        this.b = this.convertValues(source["b"], ParseResult);
+	        this.commonSNPs = source["commonSNPs"];
+	        this.identical = source["identical"];
+	        this.differ = source["differ"];
+	        this.onlyA = source["onlyA"];
+	        this.onlyB = source["onlyB"];
+	        this.rows = this.convertValues(source["rows"], ComparisonRow);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class DBStats {
 	    totalSNPs: number;
 	    totalRecords: number;
@@ -212,6 +287,68 @@ export namespace backend {
 	}
 	
 	
+	export class SNPRecord {
+	    rsid: string;
+	    gene: string;
+	    variant: string;
+	    chrom: string;
+	    cat: string;
+	    subcat: string;
+	    riskAllele: string;
+	    riskLevel: string;
+	    trait: string;
+	    desc: string;
+	    rec: string;
+	    conf: string;
+	    pmid: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SNPRecord(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.rsid = source["rsid"];
+	        this.gene = source["gene"];
+	        this.variant = source["variant"];
+	        this.chrom = source["chrom"];
+	        this.cat = source["cat"];
+	        this.subcat = source["subcat"];
+	        this.riskAllele = source["riskAllele"];
+	        this.riskLevel = source["riskLevel"];
+	        this.trait = source["trait"];
+	        this.desc = source["desc"];
+	        this.rec = source["rec"];
+	        this.conf = source["conf"];
+	        this.pmid = source["pmid"];
+	    }
+	}
+	export class SessionMeta {
+	    id: string;
+	    filename: string;
+	    provider: string;
+	    matched: number;
+	    highCount: number;
+	    modCount: number;
+	    savedAt: string;
+	    generatedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionMeta(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.filename = source["filename"];
+	        this.provider = source["provider"];
+	        this.matched = source["matched"];
+	        this.highCount = source["highCount"];
+	        this.modCount = source["modCount"];
+	        this.savedAt = source["savedAt"];
+	        this.generatedAt = source["generatedAt"];
+	    }
+	}
 
 }
 

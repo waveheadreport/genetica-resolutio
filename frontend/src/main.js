@@ -1,7 +1,9 @@
 import './fonts.css';
 import './style.css';
 import { OpenFileDialog, GetFileInfo, AnalyzeFile, GetDBStats, SaveReport,
-         GetDatabaseSources, DownloadDatabase, CancelDownload, DeleteDatabase } from '../wailsjs/go/main/App';
+         GetDatabaseSources, DownloadDatabase, CancelDownload, DeleteDatabase,
+         LookupRSID, SaveSession, ListSessions, LoadSession, DeleteSession,
+         CheckDatabaseUpdates, CompareFiles } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
 // ── STATE ────────────────────────────────────────────────────────────────────
@@ -9,6 +11,13 @@ let selectedFilePath = null;
 let analysisResult   = null;
 let hideRiskFindings = false;
 let dbStats          = null;
+// Identity key for the current file (filename|sizeMB). Used to scope per-file
+// notes so annotations don't bleed between analyses of different people's DNA.
+let fileIdent        = null;
+// Ancestry for the currently-loaded analysis. Does NOT recalculate risk — we
+// don't have per-population effect sizes — but surfaces a caveat banner and
+// lets future versions filter studies by study population.
+let analysisAncestry = 'any';
 // Biological sex for the *currently-loaded* analysis. Not persisted — the
 // user is prompted each time because one install may be used to review
 // multiple people's files.
@@ -70,6 +79,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         break;
       }
+      case 'addNote':       promptNote(el.dataset.key, el); break;
+      case 'deleteNote':    deleteNote(el.dataset.key); break;
+      case 'runLookup':     runRsidLookup(); break;
+      case 'openSession':   openSession(el.dataset.id); break;
+      case 'deleteSession': confirmDeleteSession(el.dataset.id); break;
+      case 'saveCurrentSession': saveCurrentSession(); break;
+      case 'checkUpdates':  checkDatabaseUpdates(); break;
+      case 'startCompare':  startCompareFlow(); break;
+      case 'pickCompareB':  pickCompareFileB(); break;
     }
   });
 });
@@ -101,6 +119,8 @@ function renderUploadScreen() {
   dz.addEventListener('drop',      handleDrop);
   // Home-screen tab switching
   document.getElementById('home-tab-analyze').addEventListener('click',    () => switchHomeTab('analyze'));
+  document.getElementById('home-tab-sessions').addEventListener('click',   () => switchHomeTab('sessions'));
+  document.getElementById('home-tab-compare').addEventListener('click',    () => switchHomeTab('compare'));
   document.getElementById('home-tab-databases').addEventListener('click',  () => switchHomeTab('databases'));
   document.getElementById('home-theme-toggle-btn').addEventListener('click', toggleTheme);
   updateDBStatDisplay();
@@ -109,8 +129,12 @@ function renderUploadScreen() {
 function switchHomeTab(tab) {
   document.querySelectorAll('.home-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   document.getElementById('home-pane-analyze').style.display   = tab === 'analyze'   ? '' : 'none';
+  document.getElementById('home-pane-sessions').style.display  = tab === 'sessions'  ? '' : 'none';
+  document.getElementById('home-pane-compare').style.display   = tab === 'compare'   ? '' : 'none';
   document.getElementById('home-pane-databases').style.display = tab === 'databases' ? '' : 'none';
   if (tab === 'databases') loadDatabasesTab();
+  if (tab === 'sessions')  loadSessionsTab();
+  if (tab === 'compare')   renderComparePane();
 }
 window.switchHomeTab = switchHomeTab;
 
@@ -137,6 +161,7 @@ async function loadFilePath(path) {
   selectedFilePath = path;
   try {
     const info = await GetFileInfo(path);
+    fileIdent = `${info.name}|${info.sizeMB}`;
     document.getElementById('fr-name').textContent = info.name;
     document.getElementById('fr-meta').textContent = `${info.sizeMB} MB · ready to analyze`;
     const fr = document.getElementById('file-ready');
@@ -161,26 +186,64 @@ function askSexThenAnalyze() {
   modal.innerHTML = `
     <div class="welcome-modal">
       <div class="welcome-eyebrow">// before we start</div>
-      <h2 class="welcome-title">Biological sex for this file</h2>
+      <h2 class="welcome-title">About this file</h2>
       <p class="welcome-desc">
-        Some findings and recommendations are sex-specific (e.g. prostate vs. breast
-        screening). Select the biological sex of the person this DNA file belongs to.
-        You can switch to "show all" later in the report.
+        A few quick questions so findings and recommendations are relevant. You can change
+        these later — they only affect filtering, never the underlying analysis.
       </p>
-      <div class="sex-opts">
-        <button class="btn-primary sex-opt" data-sex="female">♀ Female</button>
-        <button class="btn-primary sex-opt" data-sex="male">♂ Male</button>
-        <button class="btn-secondary sex-opt" data-sex="any">Prefer not to say / show all</button>
+      <div class="pre-group">
+        <div class="pre-group-label">Biological sex</div>
+        <div class="sex-opts">
+          <button class="sex-opt" data-sex="female">♀ Female</button>
+          <button class="sex-opt" data-sex="male">♂ Male</button>
+          <button class="sex-opt" data-sex="any">⚥ Prefer not to say</button>
+        </div>
+      </div>
+      <div class="pre-group">
+        <div class="pre-group-label">Genetic ancestry (best rough match)</div>
+        <div class="sex-opts">
+          <button class="anc-opt" data-anc="eur">European</button>
+          <button class="anc-opt" data-anc="afr">African</button>
+          <button class="anc-opt" data-anc="eas">East Asian</button>
+          <button class="anc-opt" data-anc="sas">South Asian</button>
+          <button class="anc-opt" data-anc="amr">Admixed American</button>
+          <button class="anc-opt" data-anc="any">Prefer not to say</button>
+        </div>
+        <div class="pre-note">
+          Most GWAS effect sizes come from European cohorts. For non-European ancestry,
+          risk findings should be treated as directional only.
+        </div>
+      </div>
+      <div class="pre-actions">
+        <button class="btn-accent" id="pre-continue" disabled>Continue →</button>
       </div>
     </div>`;
   document.body.appendChild(modal);
+  let pickedSex = null, pickedAnc = null;
+  const continueBtn = modal.querySelector('#pre-continue');
+  const refresh = () => { continueBtn.disabled = !(pickedSex && pickedAnc); };
   modal.querySelectorAll('.sex-opt').forEach(btn => {
     btn.addEventListener('click', () => {
-      analysisSex = btn.dataset.sex;
-      chosenSex   = btn.dataset.sex;
-      modal.remove();
-      startAnalysis();
+      modal.querySelectorAll('.sex-opt').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      pickedSex = btn.dataset.sex;
+      refresh();
     });
+  });
+  modal.querySelectorAll('.anc-opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      modal.querySelectorAll('.anc-opt').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      pickedAnc = btn.dataset.anc;
+      refresh();
+    });
+  });
+  continueBtn.addEventListener('click', () => {
+    analysisSex      = pickedSex;
+    chosenSex        = pickedSex;
+    analysisAncestry = pickedAnc;
+    modal.remove();
+    startAnalysis();
   });
 }
 
@@ -263,6 +326,7 @@ function renderReport(startTab = 'overview') {
   renderActionPlanTab(actionPlan);
   cats.forEach((cat, idx) => renderCategoryTab(cat, categories[cat], idx));
   if (summary.drugs && summary.drugs.length > 0) renderDrugsTab(summary.drugs);
+  renderLookupTab();
   renderDoctorTab();
 
   document.getElementById('risk-toggle-btn').addEventListener('click', toggleRisk);
@@ -379,6 +443,7 @@ function renderOverviewTab(summary, matched, parsed) {
   const dbCount = dbStats ? dbStats.totalSNPs + '+' : '357+';
 
   el.innerHTML = `
+    ${ancestryCaveatHTML()}
     <div class="ap-cta-banner" data-action="switchTab" data-tab="action-plan">
       <span class="ap-cta-icon">⚡</span>
       <div class="ap-cta-text">
@@ -751,6 +816,8 @@ function findingCard(f, hidden = false) {
   const pmidLink = f.pmid
     ? `<a href="https://pubmed.ncbi.nlm.nih.gov/${h(f.pmid)}" target="_blank" class="pubmed-link">PubMed ${h(f.pmid)}</a>`
     : '';
+  const noteKey = noteKeyFor(f);
+  const existingNote = noteKey ? (loadNote(noteKey) || '') : '';
   return `
   <div class="finding f-${h(f.color)}${hidden ? ' finding-normal' : ''}" style="${hidden ? 'display:none' : ''}">
     <div class="finding-header">
@@ -765,10 +832,20 @@ function findingCard(f, hidden = false) {
     <div class="finding-body">
       <p class="finding-effect">${h(f.effect)}</p>
       ${f.rec ? `<div class="finding-rec"><span class="rec-label">Recommendation:</span> ${h(f.rec)}</div>` : ''}
+      ${existingNote ? `
+      <div class="finding-note" id="note-box-${h(noteKey)}">
+        <div class="finding-note-label">📝 Your note</div>
+        <div class="finding-note-text">${h(existingNote)}</div>
+        <div class="finding-note-actions">
+          <button class="note-btn-small" data-action="addNote" data-key="${h(noteKey)}">Edit</button>
+          <button class="note-btn-small" data-action="deleteNote" data-key="${h(noteKey)}">Delete</button>
+        </div>
+      </div>` : ''}
     </div>
     <div class="finding-footer">
       ${pmidLink}
       <span class="conf-tag">${h(f.confidence)} confidence</span>
+      ${noteKey && !existingNote ? `<button class="note-btn" data-action="addNote" data-key="${h(noteKey)}">📝 Add note</button>` : ''}
     </div>
   </div>`;
 }
@@ -792,6 +869,8 @@ function uploadScreenHTML() {
       </div>
       <div class="home-tabs">
         <div class="home-tab active" data-tab="analyze"   id="home-tab-analyze">🧬 Analyze</div>
+        <div class="home-tab"        data-tab="sessions"  id="home-tab-sessions">📂 Recent</div>
+        <div class="home-tab"        data-tab="compare"   id="home-tab-compare">🔀 Compare</div>
         <div class="home-tab"        data-tab="databases" id="home-tab-databases">🗄 Databases</div>
       </div>
       <div class="topbar-right">
@@ -852,6 +931,41 @@ function uploadScreenHTML() {
             <div class="feat"><span class="feat-icon">⚡</span><div><div class="feat-title">Personalized Action Plan</div><div class="feat-desc">Diet, supplements, exercise, and sleep recommendations driven by your specific variants.</div></div></div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- SESSIONS PANE -->
+    <div id="home-pane-sessions" style="display:none">
+      <div class="db-pane">
+        <div class="db-pane-header">
+          <div>
+            <div class="db-pane-title">Recent Analyses</div>
+            <div class="db-pane-sub">
+              Saved reports from past analyses. Click to reopen without re-running matching —
+              useful when reviewing multiple files or revisiting a report later.
+            </div>
+          </div>
+        </div>
+        <div id="sessions-list-wrap">
+          <div class="db-loading">Loading sessions…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- COMPARE PANE -->
+    <div id="home-pane-compare" style="display:none">
+      <div class="db-pane">
+        <div class="db-pane-header">
+          <div>
+            <div class="db-pane-title">Compare Two DNA Files</div>
+            <div class="db-pane-sub">
+              Useful for family members (parent/child inheritance, siblings) or for comparing
+              the same person across providers (23andMe vs AncestryDNA). Both files are parsed
+              locally — nothing is uploaded.
+            </div>
+          </div>
+        </div>
+        <div id="compare-pane-body"></div>
       </div>
     </div>
 
@@ -926,6 +1040,7 @@ function reportShellHTML(parsed, matched, cats, summary) {
     `<div class="tab-item" data-action="switchTab" data-tab="action-plan">⚡ Action Plan</div>`,
     ...cats.map(c => `<div class="tab-item" data-action="switchTab" data-tab="${c}">${CAT_META[c]?.icon||'🔬'} ${CAT_META[c]?.title||c}</div>`),
     ...(summary.drugs?.length ? [`<div class="tab-item" data-action="switchTab" data-tab="drugs">💉 Drug Response</div>`] : []),
+    `<div class="tab-item" data-action="switchTab" data-tab="lookup">🔎 SNP Lookup</div>`,
     `<div class="tab-item" data-action="switchTab" data-tab="doctor">🩺 Doctor Summary</div>`,
   ].join('');
 
@@ -934,6 +1049,7 @@ function reportShellHTML(parsed, matched, cats, summary) {
     `<div class="rep-section"        id="tab-action-plan"  data-tab="action-plan"></div>`,
     ...cats.map(c => `<div class="rep-section" id="tab-${c}" data-tab="${c}"></div>`),
     ...(summary.drugs?.length ? [`<div class="rep-section" id="tab-drugs" data-tab="drugs"></div>`] : []),
+    `<div class="rep-section" id="tab-lookup" data-tab="lookup"></div>`,
     `<div class="rep-section" id="tab-doctor" data-tab="doctor"></div>`,
   ].join('');
 
@@ -956,8 +1072,9 @@ function reportShellHTML(parsed, matched, cats, summary) {
         <button class="rb-btn" id="risk-toggle-btn">⚠️ Risk</button>
         <button class="rb-btn" id="sex-filter-btn" title="Toggle sex-specific filtering for this file"></button>
         <button class="rb-btn" id="theme-toggle-btn" title="Toggle light / dark mode">🌓 Theme</button>
-        <button class="rb-btn" id="print-btn" title="Print or export as PDF (action plan + section summaries)">🖨 Print</button>
+        <button class="rb-btn" id="print-btn" title="Print, or 'Save as PDF' in the print dialog">📄 PDF / Print</button>
         <button class="rb-btn" id="save-btn">💾 Save Report</button>
+        <button class="rb-btn" data-action="saveCurrentSession" title="Save this analysis so it can be reopened later without re-running matching">📂 Save Session</button>
         <button class="rb-btn" id="new-analysis-btn">↩ New Analysis</button>
       </div>
     </div>
@@ -1042,6 +1159,7 @@ function renderDBTable(sources) {
   <div class="db-notice">
     <span>🔒</span>
     <span>Only public scientific reference data is downloaded — your DNA never leaves your device.</span>
+    <button class="btn-secondary" style="margin-left:auto" data-action="checkUpdates">↻ Check for updates</button>
   </div>
   <div class="db-table">
     <div class="db-header-row">
@@ -1127,3 +1245,354 @@ function setDBActionBtn(sourceID, html) {
   const col = document.querySelector(`#db-row-${sourceID} .db-col-action`);
   if (col) col.innerHTML = html;
 }
+
+// ── ANCESTRY CAVEAT ──────────────────────────────────────────────────────────
+const ANC_LABEL = {
+  eur: 'European', afr: 'African', eas: 'East Asian',
+  sas: 'South Asian', amr: 'Admixed American', any: 'Not specified',
+};
+function ancestryCaveatHTML() {
+  if (!analysisAncestry || analysisAncestry === 'any' || analysisAncestry === 'eur') return '';
+  return `
+  <div class="anc-banner">
+    <span class="anc-icon">🧭</span>
+    <div class="anc-text">
+      <strong>Ancestry note — ${h(ANC_LABEL[analysisAncestry] || analysisAncestry)}</strong>
+      Most GWAS-derived effect sizes were calibrated on European cohorts.
+      For ${h(ANC_LABEL[analysisAncestry] || 'this')} ancestry, risk magnitudes may differ.
+      Treat these findings as <em>directional</em> rather than precise risk estimates.
+    </div>
+  </div>`;
+}
+
+// ── PER-FINDING NOTES ────────────────────────────────────────────────────────
+// Notes are scoped per-file (fileIdent) + per-rsid + per-trait so annotations
+// don't leak across different analyses of different people's DNA.
+function noteKeyFor(f) {
+  if (!fileIdent || !f || !f.rsid) return '';
+  return `gr-note|${fileIdent}|${f.rsid}|${normalizeTrait(f.trait)}`;
+}
+function loadNote(key) {
+  try { return localStorage.getItem(key); } catch (_) { return null; }
+}
+function saveNote(key, text) {
+  try {
+    if (text) localStorage.setItem(key, text);
+    else localStorage.removeItem(key);
+  } catch (_) {}
+}
+function promptNote(key, btn) {
+  const current = loadNote(key) || '';
+  // Build an inline editor right next to the button rather than window.prompt,
+  // which Wails/WebKit don't always render nicely.
+  const card = btn.closest('.finding');
+  if (!card) return;
+  // Remove any existing editor in this card
+  const existing = card.querySelector('.note-editor');
+  if (existing) { existing.remove(); return; }
+  const editor = document.createElement('div');
+  editor.className = 'note-editor';
+  editor.innerHTML = `
+    <textarea class="note-textarea" placeholder="e.g. discussed with Dr. Smith, retest 2027">${h(current)}</textarea>
+    <div class="note-editor-actions">
+      <button class="btn-secondary note-btn-small" data-role="save">Save</button>
+      <button class="btn-secondary note-btn-small" data-role="cancel">Cancel</button>
+    </div>`;
+  card.querySelector('.finding-body').appendChild(editor);
+  const ta = editor.querySelector('textarea');
+  ta.focus();
+  editor.querySelector('[data-role="save"]').addEventListener('click', () => {
+    const v = ta.value.trim();
+    saveNote(key, v);
+    editor.remove();
+    rerenderCurrentTabPreservingNotes();
+  });
+  editor.querySelector('[data-role="cancel"]').addEventListener('click', () => editor.remove());
+}
+function deleteNote(key) {
+  saveNote(key, '');
+  rerenderCurrentTabPreservingNotes();
+}
+function rerenderCurrentTabPreservingNotes() {
+  // Re-render just the active tab. Simplest is a full renderReport.
+  const active = document.querySelector('.tab-item.active')?.dataset.tab || 'overview';
+  renderReport(active);
+}
+
+// ── RSID LOOKUP TAB ──────────────────────────────────────────────────────────
+function renderLookupTab() {
+  const el = document.getElementById('tab-lookup');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="sec-hdr">
+      <div class="sec-num">🔎</div>
+      <div class="sec-title">SNP Lookup</div>
+      <div class="sec-badge">Search any rsID</div>
+    </div>
+    <p style="font-size:13px;color:var(--ink2);line-height:1.7;margin-bottom:20px">
+      Paste any rsID (e.g. <code>rs1815739</code>) to see all matching annotations from
+      your installed reference databases, plus your genotype if this SNP was in your file.
+    </p>
+    <div class="lookup-form">
+      <input type="text" id="lookup-input" class="lookup-input"
+             placeholder="rs1801133"
+             autocomplete="off" spellcheck="false"/>
+      <button class="btn-accent" data-action="runLookup">Search</button>
+    </div>
+    <div id="lookup-results" class="lookup-results"></div>`;
+  const input = document.getElementById('lookup-input');
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') runRsidLookup();
+  });
+}
+async function runRsidLookup() {
+  const input = document.getElementById('lookup-input');
+  const out   = document.getElementById('lookup-results');
+  if (!input || !out) return;
+  const raw = input.value.trim().toLowerCase();
+  if (!raw) return;
+  const rsid = raw.startsWith('rs') ? raw : 'rs' + raw.replace(/^rs/i, '');
+  out.innerHTML = '<div class="db-loading">Searching…</div>';
+  let userGeno = null;
+  try {
+    if (analysisResult?.parsed?.snps) {
+      const g = analysisResult.parsed.snps[rsid];
+      if (g) userGeno = `${g[0]}/${g[1]}`;
+    }
+  } catch (_) {}
+  try {
+    const recs = await LookupRSID(rsid);
+    if (!recs || recs.length === 0) {
+      out.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">🔍</div>
+          <p>No annotations found for <code>${h(rsid)}</code> in installed databases.</p>
+          ${userGeno ? `<p>Your genotype for this SNP: <strong>${h(userGeno)}</strong></p>` : ''}
+        </div>`;
+      return;
+    }
+    out.innerHTML = `
+      <div class="lookup-header">
+        <div class="lookup-rsid">${h(rsid)}</div>
+        ${userGeno ? `<div class="lookup-geno">Your genotype: <strong>${h(userGeno)}</strong></div>`
+                   : `<div class="lookup-geno">Not in your uploaded file</div>`}
+        <div class="lookup-count">${recs.length} annotation${recs.length === 1 ? '' : 's'} across installed databases</div>
+      </div>
+      <div class="lookup-list">
+        ${recs.map(r => `
+        <div class="lookup-card">
+          <div class="lookup-card-head">
+            <strong>${h(r.trait || '(no trait)')}</strong>
+            ${r.gene ? `<code class="gene-tag">${h(r.gene)}</code>` : ''}
+            ${r.riskAllele ? `<span class="geno-tag">Risk allele: ${h(r.riskAllele)}</span>` : ''}
+          </div>
+          <div class="lookup-card-body">
+            ${r.desc ? `<div>${h(r.desc)}</div>` : ''}
+            ${r.rec ? `<div style="margin-top:6px;color:var(--amber)"><strong>Rec:</strong> ${h(r.rec)}</div>` : ''}
+          </div>
+          <div class="lookup-card-foot">
+            ${r.cat ? `<span>${h(CAT_META[r.cat]?.title || r.cat)}</span>` : ''}
+            ${r.pmid ? `<a href="https://pubmed.ncbi.nlm.nih.gov/${h(r.pmid)}" target="_blank" class="pubmed-link">PubMed ${h(r.pmid)}</a>` : ''}
+            ${r.conf ? `<span class="conf-tag">${h(r.conf)}</span>` : ''}
+          </div>
+        </div>`).join('')}
+      </div>`;
+  } catch (e) {
+    out.innerHTML = `<div style="color:var(--red)">Lookup failed: ${h(String(e))}</div>`;
+  }
+}
+
+// ── SESSIONS ─────────────────────────────────────────────────────────────────
+async function loadSessionsTab() {
+  const wrap = document.getElementById('sessions-list-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="db-loading">Loading…</div>';
+  try {
+    const list = await ListSessions();
+    if (!list || list.length === 0) {
+      wrap.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">📂</div>
+          <p>No saved sessions yet. After analyzing a file, click "💾 Save Session" in the report toolbar to save it here.</p>
+        </div>`;
+      return;
+    }
+    wrap.innerHTML = `
+      <div class="sess-list">
+        ${list.map(s => `
+        <div class="sess-row" data-action="openSession" data-id="${h(s.id)}">
+          <div class="sess-icon">📄</div>
+          <div class="sess-main">
+            <div class="sess-filename">${h(s.filename || '(unnamed)')}</div>
+            <div class="sess-meta">
+              <span>${h(s.provider || '')}</span>
+              <span>·</span>
+              <span>${(s.matched||0).toLocaleString()} variants matched</span>
+              <span>·</span>
+              <span>saved ${h(s.savedAt || '')}</span>
+            </div>
+          </div>
+          <div class="sess-stats">
+            ${s.highCount ? `<span class="sess-stat sess-stat-red">${s.highCount} high</span>` : ''}
+            ${s.modCount  ? `<span class="sess-stat sess-stat-amber">${s.modCount} mod</span>` : ''}
+          </div>
+          <button class="btn-secondary" data-action="deleteSession" data-id="${h(s.id)}" onclick="event.stopPropagation()">🗑</button>
+        </div>`).join('')}
+      </div>`;
+    // Stop-propagation on the delete button so clicking delete doesn't also open.
+    wrap.querySelectorAll('[data-action="deleteSession"]').forEach(b => {
+      b.addEventListener('click', (e) => e.stopPropagation());
+    });
+  } catch (e) {
+    wrap.innerHTML = `<div style="color:var(--red)">Failed to load sessions: ${h(String(e))}</div>`;
+  }
+}
+async function saveCurrentSession() {
+  if (!analysisResult) return;
+  try {
+    const name = fileIdent ? fileIdent.split('|')[0] : 'analysis';
+    await SaveSession(analysisResult, name);
+    const btn = document.querySelector('[data-action="saveCurrentSession"]');
+    if (btn) {
+      const orig = btn.textContent;
+      btn.textContent = '✓ Saved';
+      setTimeout(() => { btn.textContent = orig; }, 2000);
+    }
+  } catch (e) {
+    console.error('SaveSession failed:', e);
+    alert('Failed to save session: ' + e);
+  }
+}
+async function openSession(id) {
+  try {
+    const result = await LoadSession(id);
+    analysisResult = result;
+    fileIdent = (result.parsed?.provider || 'session') + '|0';
+    // Opening a saved session bypasses the sex/ancestry prompt — we don't
+    // know the user's intent for that view, so default to "show everything".
+    analysisSex = 'any'; chosenSex = 'any'; analysisAncestry = 'any';
+    renderReport('overview');
+  } catch (e) {
+    console.error('LoadSession failed:', e);
+    alert('Failed to open session: ' + e);
+  }
+}
+async function confirmDeleteSession(id) {
+  try {
+    await DeleteSession(id);
+    await loadSessionsTab();
+  } catch (e) {
+    console.error('DeleteSession failed:', e);
+  }
+}
+
+// ── DATABASE UPDATE CHECKER ──────────────────────────────────────────────────
+async function checkDatabaseUpdates() {
+  try {
+    const info = await CheckDatabaseUpdates();
+    if (!info) return;
+    for (const [srcID, v] of Object.entries(info)) {
+      const statusCol = document.querySelector(`#db-row-${srcID} .db-col-status`);
+      if (!statusCol) continue;
+      const old = statusCol.querySelector('.db-update-note');
+      if (old) old.remove();
+      const note = document.createElement('div');
+      note.className = 'db-update-note';
+      if (v.updateAvail) {
+        note.innerHTML = `<span class="db-badge db-badge-update">↑ Update available</span>`;
+      } else if (v.checked) {
+        note.innerHTML = `<span class="db-uptodate">✓ Up to date</span>`;
+      } else {
+        note.innerHTML = `<span class="db-uptodate">? Couldn't check</span>`;
+      }
+      statusCol.appendChild(note);
+    }
+  } catch (e) {
+    console.error('CheckDatabaseUpdates failed:', e);
+  }
+}
+
+// ── COMPARE TWO FILES ────────────────────────────────────────────────────────
+let compareA = null;
+let compareB = null;
+function renderComparePane() {
+  const el = document.getElementById('compare-pane-body');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="compare-slots">
+      <div class="compare-slot" id="compare-slot-a">
+        <div class="compare-slot-label">File A</div>
+        <div class="compare-slot-name">${compareA ? h(compareA.split('/').pop()) : '(no file)'}</div>
+        <button class="btn-primary" id="compare-pick-a">Choose file A…</button>
+      </div>
+      <div class="compare-arrow">⇄</div>
+      <div class="compare-slot" id="compare-slot-b">
+        <div class="compare-slot-label">File B</div>
+        <div class="compare-slot-name">${compareB ? h(compareB.split('/').pop()) : '(no file)'}</div>
+        <button class="btn-primary" id="compare-pick-b">Choose file B…</button>
+      </div>
+    </div>
+    <div class="compare-actions">
+      <button class="btn-accent" id="compare-run" ${compareA && compareB ? '' : 'disabled'}>Run comparison →</button>
+    </div>
+    <div id="compare-results"></div>`;
+  document.getElementById('compare-pick-a').addEventListener('click', () => pickCompareFile('a'));
+  document.getElementById('compare-pick-b').addEventListener('click', () => pickCompareFile('b'));
+  document.getElementById('compare-run').addEventListener('click', runCompare);
+}
+async function pickCompareFile(slot) {
+  try {
+    const path = await OpenFileDialog();
+    if (!path) return;
+    if (slot === 'a') compareA = path;
+    else              compareB = path;
+    renderComparePane();
+  } catch (e) {
+    console.error(e);
+  }
+}
+async function runCompare() {
+  const out = document.getElementById('compare-results');
+  out.innerHTML = '<div class="db-loading">Parsing both files and comparing — this may take a minute…</div>';
+  try {
+    const res = await CompareFiles(compareA, compareB);
+    renderCompareResult(res, out);
+  } catch (e) {
+    out.innerHTML = `<div style="color:var(--red)">Comparison failed: ${h(String(e))}</div>`;
+  }
+}
+function renderCompareResult(r, out) {
+  if (!r) { out.innerHTML = ''; return; }
+  const rows = r.rows || [];
+  out.innerHTML = `
+    <div class="compare-stats">
+      <div class="compare-stat"><div class="compare-stat-val">${(r.commonSNPs||0).toLocaleString()}</div><div>SNPs in both</div></div>
+      <div class="compare-stat"><div class="compare-stat-val">${(r.identical||0).toLocaleString()}</div><div>Identical genotype</div></div>
+      <div class="compare-stat compare-stat-amber"><div class="compare-stat-val">${(r.differ||0).toLocaleString()}</div><div>Different genotype</div></div>
+      <div class="compare-stat"><div class="compare-stat-val">${(r.onlyA||0).toLocaleString()}</div><div>Only in A</div></div>
+      <div class="compare-stat"><div class="compare-stat-val">${(r.onlyB||0).toLocaleString()}</div><div>Only in B</div></div>
+    </div>
+    <h3 style="margin:28px 0 12px;font-size:14px;color:var(--ink)">Annotated variants where A and B differ (${rows.length})</h3>
+    ${rows.length === 0 ? `
+      <div class="empty-state">
+        <div class="empty-state-icon">✓</div>
+        <p>No differences in annotated variants. Any overall genotype differences above are in non-curated SNPs.</p>
+      </div>` : `
+    <div class="compare-table">
+      <div class="compare-row compare-head">
+        <div>Trait</div><div>Gene</div><div>rsID</div><div>A</div><div>B</div><div>Status</div>
+      </div>
+      ${rows.slice(0, 500).map(row => `
+      <div class="compare-row">
+        <div>${h(row.trait || '')}</div>
+        <div><code class="gene-tag">${h(row.gene || '')}</code></div>
+        <div><span class="rsid-tag">${h(row.rsid || '')}</span></div>
+        <div><span class="geno-tag">${h(row.a1Geno || '')}</span></div>
+        <div><span class="geno-tag">${h(row.a2Geno || '')}</span></div>
+        <div style="font-size:11px;color:var(--ink2)">${h((row.notes || []).join('; '))}</div>
+      </div>`).join('')}
+      ${rows.length > 500 ? `<div style="padding:10px;color:var(--muted);font-size:12px">Showing first 500 of ${rows.length.toLocaleString()}</div>` : ''}
+    </div>`}`;
+}
+function startCompareFlow() { switchHomeTab('compare'); }
+function pickCompareFileB() { pickCompareFile('b'); }

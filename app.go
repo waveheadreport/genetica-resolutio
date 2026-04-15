@@ -317,6 +317,73 @@ func (a *App) DeleteDatabase(sourceID string) error {
 	return backend.DeleteSource(sourceID)
 }
 
+// ── RSID LOOKUP ──────────────────────────────────────────────────────────────
+
+// LookupRSID returns all annotations across installed databases for a given rsID.
+func (a *App) LookupRSID(rsid string) ([]backend.SNPRecord, error) {
+	return backend.QuerySNPsByRSID(rsid)
+}
+
+// ── SESSIONS ──────────────────────────────────────────────────────────────────
+
+func (a *App) SaveSession(result backend.AnalysisResult, filename string) (string, error) {
+	return backend.SaveAnalysisSession(&result, filename)
+}
+
+func (a *App) ListSessions() ([]backend.SessionMeta, error) {
+	return backend.ListSessionsOnDisk()
+}
+
+func (a *App) LoadSession(id string) (*backend.AnalysisResult, error) {
+	return backend.LoadSessionByID(id)
+}
+
+func (a *App) DeleteSession(id string) error {
+	return backend.DeleteSessionByID(id)
+}
+
+// ── DATABASE UPDATE CHECKER ──────────────────────────────────────────────────
+
+// CheckDatabaseUpdates issues concurrent HEAD requests against every installed
+// source's URL and returns whether each is older than the remote copy.
+func (a *App) CheckDatabaseUpdates() (map[string]backend.SourceUpdateInfo, error) {
+	installed, err := backend.InstalledSources()
+	if err != nil {
+		return nil, err
+	}
+
+	urlByID := make(map[string]string)
+	for _, s := range dbSources {
+		urlByID[s.ID] = s.URL
+	}
+
+	out := make(map[string]backend.SourceUpdateInfo)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, m := range installed {
+		url, ok := urlByID[m.Name]
+		if !ok {
+			continue
+		}
+		wg.Add(1)
+		go func(id, u, saved string) {
+			defer wg.Done()
+			info := backend.CheckSourceUpdate(a.ctx, id, u, saved)
+			mu.Lock()
+			out[id] = info
+			mu.Unlock()
+		}(m.Name, url, m.DownloadedAt)
+	}
+	wg.Wait()
+	return out, nil
+}
+
+// ── FILE COMPARISON ──────────────────────────────────────────────────────────
+
+func (a *App) CompareFiles(pathA, pathB string) (*backend.ComparisonResult, error) {
+	return backend.CompareTwoFiles(pathA, pathB)
+}
+
 // ── EXPORT ────────────────────────────────────────────────────────────────────
 
 func (a *App) SaveReport(content string) (string, error) {
