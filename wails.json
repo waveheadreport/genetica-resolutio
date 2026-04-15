@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Genetica Resolutio",
+  "outputfilename": "genetica-resolutio",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "info": {
+    "companyName": "Genetica Resolutio",
+    "productName": "Genetica Resolutio",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright 2026",
+    "comments": "Privacy-first genetic health analyzer"
+  },
+  "author": {
+    "name": "",
+    "email": ""
+  }
+}
