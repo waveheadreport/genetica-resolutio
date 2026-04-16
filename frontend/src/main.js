@@ -3,7 +3,7 @@ import './style.css';
 import { OpenFileDialog, GetFileInfo, AnalyzeFile, GetDBStats, SaveReport,
          GetDatabaseSources, DownloadDatabase, CancelDownload, DeleteDatabase,
          LookupRSID, SaveSession, ListSessions, LoadSession, DeleteSession,
-         CheckDatabaseUpdates, CompareFiles } from '../wailsjs/go/main/App';
+         CheckDatabaseUpdates, CompareFiles, ExportFindings } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
 // ── STATE ────────────────────────────────────────────────────────────────────
@@ -37,12 +37,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const saved = localStorage.getItem('gr-theme');
     if (saved === 'light') document.documentElement.classList.add('theme-light');
   } catch (_) {}
-  renderUploadScreen();
-  try {
-    dbStats = await GetDBStats();
-    updateDBStatDisplay();
-  } catch (e) {
-    console.error('GetDBStats failed:', e);
+  if (!hasAcceptedDisclaimer()) {
+    showDisclaimerModal();
+    // Continue wiring event handlers; the disclaimer modal will call
+    // initAppAfterConsent() which renders the upload screen.
+  } else {
+    initAppAfterConsent();
   }
 
   // Listen for database download progress / completion events
@@ -79,6 +79,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         break;
       }
+      case 'exportCSV':     exportFindingsAs('csv'); break;
+      case 'exportJSON':    exportFindingsAs('json'); break;
+      case 'clearSearch':   clearSectionSearch(el.dataset.cat); break;
+      case 'showAbout':     showAboutModal(); break;
       case 'addNote':       promptNote(el.dataset.key, el); break;
       case 'deleteNote':    deleteNote(el.dataset.key); break;
       case 'runLookup':     runRsidLookup(); break;
@@ -741,6 +745,13 @@ function renderCategoryTab(cat, findings, idx) {
       <div class="sec-badge">${groups.length} trait${groups.length === 1 ? '' : 's'} · ${filtered.length} variant${filtered.length === 1 ? '' : 's'}</div>
     </div>
     ${renderCatSummary(meta, sorted, actionable)}
+    <div class="sec-search">
+      <span class="sec-search-icon">🔍</span>
+      <input type="text" class="sec-search-input" id="sec-search-${cat}"
+             placeholder="Filter this section by trait, gene, or rsID…"
+             autocomplete="off" spellcheck="false"/>
+      <button class="sec-search-clear" data-action="clearSearch" data-cat="${cat}" style="display:none">✕</button>
+    </div>
     ${normalGroups > 0 ? `
     <div class="filter-bar">
       <span class="filter-bar-label">Show</span>
@@ -751,6 +762,33 @@ function renderCategoryTab(cat, findings, idx) {
     <div id="findings-${cat}">
       ${groups.map(g => groupRow(cat, g)).join('')}
     </div>`;
+  const searchInput = document.getElementById('sec-search-' + cat);
+  if (searchInput) searchInput.addEventListener('input', () => applySectionSearch(cat));
+}
+
+function applySectionSearch(cat) {
+  const input = document.getElementById('sec-search-' + cat);
+  const clearBtn = document.querySelector(`.sec-search-clear[data-cat="${cat}"]`);
+  if (!input) return;
+  const q = input.value.trim().toLowerCase();
+  if (clearBtn) clearBtn.style.display = q ? '' : 'none';
+  const groups = findingGroups[cat] || [];
+  document.querySelectorAll(`#findings-${cat} .finding-group`).forEach((el, i) => {
+    const g = groups[i];
+    if (!g) return;
+    if (!q) {
+      // Empty query: defer to the actionable/all filter bar state.
+      const isAllMode = document.querySelector(`.filter-btn[data-cat="${cat}"][data-mode="all"].active`);
+      el.style.display = (g.allNormal && !isAllMode) ? 'none' : '';
+      return;
+    }
+    const hay = [g.trait, ...g.findings.map(f => `${f.gene} ${f.rsid} ${f.trait} ${f.desc}`)].join(' ').toLowerCase();
+    el.style.display = hay.includes(q) ? '' : 'none';
+  });
+}
+function clearSectionSearch(cat) {
+  const input = document.getElementById('sec-search-' + cat);
+  if (input) { input.value = ''; applySectionSearch(cat); }
 }
 
 function setSectionFilter(cat, mode, btn) {
@@ -880,6 +918,7 @@ function uploadScreenHTML() {
       <div class="topbar-right">
         <span class="privacy-tag">100% Local · Zero Network</span>
         <button class="rb-btn" id="home-theme-toggle-btn" title="Toggle light / dark mode">🌓 Theme</button>
+        <button class="rb-btn" data-action="showAbout" title="About, version, and data credits">ⓘ About</button>
       </div>
     </div>
 
@@ -1078,8 +1117,11 @@ function reportShellHTML(parsed, matched, cats, summary) {
         <button class="rb-btn" id="theme-toggle-btn" title="Toggle light / dark mode">🌓 Theme</button>
         <button class="rb-btn" id="print-btn" title="Print, or 'Save as PDF' in the print dialog">📄 PDF / Print</button>
         <button class="rb-btn" id="save-btn">💾 Save Report</button>
+        <button class="rb-btn" data-action="exportCSV"  title="Export all findings to CSV">⬇ CSV</button>
+        <button class="rb-btn" data-action="exportJSON" title="Export all findings to JSON">⬇ JSON</button>
         <button class="rb-btn" data-action="saveCurrentSession" title="Save this analysis so it can be reopened later without re-running matching">📂 Save Session</button>
         <button class="rb-btn" id="new-analysis-btn">↩ New Analysis</button>
+        <button class="rb-btn" data-action="showAbout" title="About, version, and data credits">ⓘ</button>
       </div>
     </div>
     <div class="rep-hero">
@@ -1647,3 +1689,193 @@ function renderCompareResult(r, out) {
 }
 function startCompareFlow() { switchHomeTab('compare'); }
 function pickCompareFileB() { pickCompareFile('b'); }
+
+// ── FIRST-RUN DISCLAIMER ─────────────────────────────────────────────────────
+const DISCLAIMER_KEY = 'gr-consent-v1';
+function hasAcceptedDisclaimer() {
+  try { return localStorage.getItem(DISCLAIMER_KEY) === 'accepted'; }
+  catch (_) { return false; }
+}
+async function initAppAfterConsent() {
+  renderUploadScreen();
+  try {
+    dbStats = await GetDBStats();
+    updateDBStatDisplay();
+  } catch (e) {
+    console.error('GetDBStats failed:', e);
+  }
+}
+function showDisclaimerModal() {
+  const modal = document.createElement('div');
+  modal.id = 'disclaimer-modal';
+  modal.className = 'welcome-overlay';
+  modal.innerHTML = `
+    <div class="welcome-modal disclaimer-modal">
+      <div class="welcome-eyebrow">// before you begin</div>
+      <h2 class="welcome-title">Important — please read</h2>
+      <div class="disclaimer-body">
+        <p><strong>This app is not a medical device and does not provide a medical diagnosis.</strong></p>
+        <p>
+          Genetica Resolutio cross-references your raw DNA data against public scientific
+          databases (GWAS Catalog, ClinVar, PharmGKB, dbSNP) and presents statistical
+          associations that researchers have reported between certain variants and health
+          traits.
+        </p>
+        <ul class="disclaimer-list">
+          <li><strong>Statistical tendencies, not certainties.</strong> A "high risk" variant
+              does not mean you will develop a condition, and a "protective" variant does not
+              mean you won't. Lifestyle, environment, and other genes all contribute.</li>
+          <li><strong>Not a substitute for professional care.</strong> Do not start, stop, or
+              change medications based on this report. Share findings with a qualified
+              physician, pharmacist, or genetic counselor before acting on them.</li>
+          <li><strong>Data may be incomplete or incorrect.</strong> Reference databases can
+              contain errors, outdated interpretations, or population biases. Most GWAS
+              effect sizes come from European cohorts and may not generalize.</li>
+          <li><strong>Your data stays local.</strong> Nothing you upload is transmitted off
+              your device. Only public reference data is downloaded on request.</li>
+        </ul>
+        <p>By continuing, you acknowledge that you understand these limitations and will use
+           this tool as an educational / informational reference only.</p>
+      </div>
+      <div class="disclaimer-check">
+        <label class="disclaimer-label">
+          <input type="checkbox" id="disclaimer-agree"/>
+          <span>I understand this is not medical advice and agree to the above.</span>
+        </label>
+      </div>
+      <div class="disclaimer-actions">
+        <button class="btn-accent" id="disclaimer-continue" disabled>Continue</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  const checkbox = modal.querySelector('#disclaimer-agree');
+  const btn = modal.querySelector('#disclaimer-continue');
+  checkbox.addEventListener('change', () => { btn.disabled = !checkbox.checked; });
+  btn.addEventListener('click', () => {
+    try { localStorage.setItem(DISCLAIMER_KEY, 'accepted'); } catch (_) {}
+    modal.remove();
+    initAppAfterConsent();
+  });
+}
+
+// ── CSV / JSON EXPORT ────────────────────────────────────────────────────────
+function collectAllFindings() {
+  if (!analysisResult) return [];
+  const rows = [];
+  const seen = new Set();
+  const push = (f, cat) => {
+    const key = `${f.rsid}|${f.trait}|${cat}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    rows.push({
+      category:   cat,
+      trait:      f.trait || '',
+      gene:       f.gene || '',
+      rsid:       f.rsid || '',
+      genotype:   `${f.a1 || ''}/${f.a2 || ''}`,
+      status:     f.status || '',
+      badge:      f.badge || '',
+      riskAllele: f.riskAllele || '',
+      effect:     f.effect || '',
+      recommendation: f.rec || '',
+      confidence: f.confidence || '',
+      pmid:       f.pmid || '',
+    });
+  };
+  for (const [cat, fs] of Object.entries(analysisResult.categories || {})) {
+    for (const f of fs) push(f, cat);
+  }
+  for (const d of (analysisResult.summary?.drugs || [])) push(d, 'drugs');
+  return rows;
+}
+function toCSV(rows) {
+  if (rows.length === 0) return '';
+  const headers = Object.keys(rows[0]);
+  const esc = (v) => {
+    const s = String(v == null ? '' : v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [headers.join(',')];
+  for (const r of rows) lines.push(headers.map(h => esc(r[h])).join(','));
+  return lines.join('\n');
+}
+// ── ABOUT MODAL ──────────────────────────────────────────────────────────────
+const APP_VERSION = '1.0.0';
+function showAboutModal() {
+  const existing = document.getElementById('about-modal');
+  if (existing) { existing.remove(); return; }
+  const modal = document.createElement('div');
+  modal.id = 'about-modal';
+  modal.className = 'welcome-overlay';
+  modal.innerHTML = `
+    <div class="welcome-modal about-modal">
+      <div class="welcome-eyebrow">// about</div>
+      <h2 class="welcome-title">Genetica Resolutio</h2>
+      <div class="about-version">Version ${APP_VERSION} · Desktop Edition</div>
+      <p class="welcome-desc">
+        A privacy-first desktop app for analyzing raw DNA files against public
+        scientific databases. Everything runs locally — your genome never leaves
+        your device.
+      </p>
+      <div class="about-section">
+        <div class="about-heading">Reference data sources</div>
+        <div class="about-source">
+          <strong>GWAS Catalog</strong> — NHGRI-EBI Catalog of human genome-wide
+          association studies.<br>
+          <em>Sollis E, et al.</em> Nucleic Acids Res. 2023;51(D1):D977–D985.
+          <a href="https://doi.org/10.1093/nar/gkac1010" target="_blank">doi:10.1093/nar/gkac1010</a>
+        </div>
+        <div class="about-source">
+          <strong>ClinVar</strong> — NCBI's archive of clinically-interpreted variants.<br>
+          <em>Landrum MJ, et al.</em> Nucleic Acids Res. 2020;48(D1):D835–D844.
+          <a href="https://doi.org/10.1093/nar/gkz972" target="_blank">doi:10.1093/nar/gkz972</a>
+        </div>
+        <div class="about-source">
+          <strong>PharmGKB</strong> — Pharmacogenomics Knowledge Base.<br>
+          <em>Whirl-Carrillo M, et al.</em> Clin Pharmacol Ther. 2021;110(3):563–572.
+          <a href="https://doi.org/10.1002/cpt.2350" target="_blank">doi:10.1002/cpt.2350</a>
+        </div>
+        <div class="about-source">
+          <strong>dbSNP</strong> — NCBI database of single nucleotide polymorphisms.<br>
+          <em>Sherry ST, et al.</em> Nucleic Acids Res. 2001;29(1):308–311.
+        </div>
+      </div>
+      <div class="about-section">
+        <div class="about-heading">Built with</div>
+        <div class="about-tech">
+          Go · <a href="https://wails.io" target="_blank">Wails v2</a> ·
+          <a href="https://github.com/etcd-io/bbolt" target="_blank">bbolt</a> ·
+          Vite · vanilla JavaScript
+        </div>
+      </div>
+      <div class="about-section">
+        <div class="about-heading">Disclaimer</div>
+        <div class="about-tech" style="line-height:1.6">
+          This software is provided for educational and informational purposes only.
+          It is not a medical device, does not provide diagnoses, and is not a
+          substitute for professional medical advice. Always consult a qualified
+          physician or genetic counselor before acting on any finding.
+        </div>
+      </div>
+      <div class="about-actions">
+        <button class="btn-primary" id="about-close">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.querySelector('#about-close').addEventListener('click', () => modal.remove());
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+}
+
+async function exportFindingsAs(format) {
+  if (!analysisResult) return;
+  const rows = collectAllFindings();
+  if (rows.length === 0) { showToast('No findings to export', 'info', 2500); return; }
+  const content = format === 'json' ? JSON.stringify(rows, null, 2) : toCSV(rows);
+  try {
+    const path = await ExportFindings(format, content);
+    if (path) showToast(`✓ Exported ${rows.length} findings`, 'ok', 2500);
+  } catch (e) {
+    console.error('Export failed:', e);
+    showToast('Export failed', 'error', 3000);
+  }
+}

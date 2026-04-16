@@ -402,3 +402,31 @@ func (a *App) SaveReport(content string) (string, error) {
 	}
 	return path, nil
 }
+
+// ExportFindings lets the frontend choose a format (csv / json) and hands it
+// the dialog + write. Content is generated on the JS side so we don't need
+// format-specific backend code.
+func (a *App) ExportFindings(format, content string) (string, error) {
+	ext := ".csv"
+	display := "CSV (*.csv)"
+	pattern := "*.csv"
+	if format == "json" {
+		ext = ".json"
+		display = "JSON (*.json)"
+		pattern = "*.json"
+	}
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Export Findings",
+		DefaultFilename: fmt.Sprintf("genetica-findings-%s%s", time.Now().Format("2006-01-02"), ext),
+		Filters: []runtime.FileFilter{
+			{DisplayName: display, Pattern: pattern},
+		},
+	})
+	if err != nil || path == "" {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		return "", fmt.Errorf("failed to write export: %w", err)
+	}
+	return path, nil
+}

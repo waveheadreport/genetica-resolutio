@@ -1219,3 +1219,104 @@ a:hover { opacity: 0.8; }
   0%, 100% { opacity: 0.6; }
   50%      { opacity: 1; }
 }
+
+/* Disclaimer modal */
+.disclaimer-modal {
+  max-width: 640px !important;
+  text-align: left !important;
+}
+.disclaimer-body {
+  font-size: 13px; line-height: 1.7; color: var(--ink2);
+  max-height: 50vh; overflow-y: auto;
+  padding: 4px 0; margin: 16px 0;
+}
+.disclaimer-body p { margin: 0 0 12px; }
+.disclaimer-body strong { color: var(--ink); }
+.disclaimer-list {
+  list-style: none; padding: 0; margin: 12px 0;
+}
+.disclaimer-list li {
+  padding: 10px 12px; margin-bottom: 8px;
+  background: rgba(255,255,255,0.02);
+  border-left: 2px solid var(--border2);
+  border-radius: 3px;
+}
+.disclaimer-check {
+  padding: 12px 14px; margin: 16px 0;
+  background: rgba(77,255,145,0.05);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.disclaimer-label {
+  display: flex; gap: 10px; align-items: flex-start;
+  cursor: pointer; font-size: 13px; color: var(--ink);
+  line-height: 1.5;
+}
+.disclaimer-label input { margin-top: 3px; flex-shrink: 0; }
+.disclaimer-actions {
+  display: flex; justify-content: flex-end; margin-top: 8px;
+}
+.btn-accent:disabled, .btn-primary:disabled {
+  opacity: 0.4; cursor: not-allowed;
+}
+
+/* Section search */
+.sec-search {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; margin-bottom: 14px;
+  background: var(--bg2);
+  border: 1px solid var(--border); border-radius: 4px;
+}
+.sec-search:focus-within { border-color: var(--accent); }
+.sec-search-icon { font-size: 13px; opacity: 0.6; }
+.sec-search-input {
+  flex: 1; background: transparent; border: none; outline: none;
+  color: var(--ink); font-family: inherit; font-size: 13px;
+}
+.sec-search-input::placeholder { color: var(--muted); }
+.sec-search-clear {
+  background: transparent; border: none; color: var(--muted);
+  cursor: pointer; font-size: 14px; padding: 2px 6px;
+}
+.sec-search-clear:hover { color: var(--ink); }
+
+/* About modal */
+.about-modal {
+  max-width: 640px !important;
+  text-align: left !important;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+.about-version {
+  font-family: 'Fira Code', monospace;
+  font-size: 11px;
+  color: var(--accent);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 16px;
+}
+.about-section { margin: 18px 0; }
+.about-heading {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px;
+  color: var(--muted); margin-bottom: 10px;
+  padding-bottom: 6px; border-bottom: 1px solid var(--border);
+}
+.about-source {
+  font-size: 12px; line-height: 1.6; color: var(--ink2);
+  padding: 8px 10px; margin-bottom: 6px;
+  background: rgba(255,255,255,0.02);
+  border-left: 2px solid var(--border2);
+  border-radius: 3px;
+}
+.about-source strong { color: var(--ink); }
+.about-source em { color: var(--muted); font-style: italic; }
+.about-source a { color: var(--accent); text-decoration: none; }
+.about-source a:hover { text-decoration: underline; }
+.about-tech {
+  font-size: 12px; color: var(--ink2); line-height: 1.7;
+}
+.about-tech a { color: var(--accent); text-decoration: none; }
+.about-tech a:hover { text-decoration: underline; }
+.about-actions {
+  display: flex; justify-content: flex-end; margin-top: 12px;
+}

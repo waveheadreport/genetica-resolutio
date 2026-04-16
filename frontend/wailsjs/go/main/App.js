@@ -30,6 +30,10 @@ export function DownloadDatabase(arg1) {
   return window['go']['main']['App']['DownloadDatabase'](arg1);
 }
 
+export function ExportFindings(arg1, arg2) {
+  return window['go']['main']['App']['ExportFindings'](arg1, arg2);
+}
+
 export function GetDBStats() {
   return window['go']['main']['App']['GetDBStats']();
 }

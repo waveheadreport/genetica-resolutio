@@ -23,8 +23,7 @@ Download the latest pre-built binary from the [Releases page](https://github.com
 | Platform | File |
 |---|---|
 | Linux (x86-64) | `genetica-resolutio-linux-amd64.tar.gz` |
-| macOS (Intel) | `genetica-resolutio-macos-intel.zip` |
-| macOS (Apple Silicon) | `genetica-resolutio-macos-arm64.zip` |
+| macOS (Universal — Intel + Apple Silicon) | `genetica-resolutio-macos-universal.zip` |
 | Windows | `genetica-resolutio-windows-amd64.zip` |
 
 Binaries are unsigned (this is a hobby project, not a $100/yr signed release). First-launch notes:
