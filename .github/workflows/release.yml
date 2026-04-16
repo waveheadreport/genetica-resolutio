@@ -79,10 +79,12 @@ jobs:
         run: wails build -platform darwin/universal -o genetica-resolutio-macos
 
       - name: Package app
+        # Wails always names the .app bundle after productName in wails.json
+        # ("Genetica Resolutio.app"), regardless of the -o binary-name flag.
         run: |
           cd build/bin
           ditto -c -k --keepParent \
-            genetica-resolutio-macos.app \
+            "Genetica Resolutio.app" \
             genetica-resolutio-macos-universal.zip
 
       - name: Upload artifact
