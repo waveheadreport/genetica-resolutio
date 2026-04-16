@@ -1,13 +1,12 @@
-name: Build macOS
+name: Build macOS + Windows
 
-# Only the macOS build lives in CI — Linux and Windows are built locally
-# and uploaded manually to the release. macOS can't be cross-compiled
-# from Linux (CGO + Apple SDK), so this runner is the only one we need.
+# macOS and Windows build in CI; Linux builds locally (CI's apt-get has
+# hung repeatedly on libwebkit2gtk, and local Linux builds in ~4s).
 #
 # Workflow:
-#   1. Build Linux + Windows locally.
-#   2. Push a v* tag — this action builds macOS and uploads the artifact.
-#   3. Download the macOS artifact, then `gh release create` with all three.
+#   1. Build Linux locally (see RELEASING.md).
+#   2. Push a v* tag — this action builds macOS + Windows and uploads.
+#   3. Download both artifacts, then `gh release create` with all three.
 #
 # Triggered on tag push. Does NOT publish a release — that's done manually
 # so everything lands in one atomic release creation.
@@ -56,4 +55,39 @@ jobs:
         with:
           name: macos-build
           path: build/bin/genetica-resolutio-macos-universal.zip
+          retention-days: 30
+
+  build-windows:
+    name: Build (Windows — amd64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Build
+        run: wails build -o genetica-resolutio-windows-amd64.exe
+
+      - name: Compress
+        shell: pwsh
+        run: |
+          cd build/bin
+          Compress-Archive -Path genetica-resolutio-windows-amd64.exe -DestinationPath genetica-resolutio-windows-amd64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: build/bin/genetica-resolutio-windows-amd64.zip
           retention-days: 30

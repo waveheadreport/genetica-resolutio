@@ -1,6 +1,6 @@
 # Releasing
 
-This project ships three platforms: Linux (x86-64), Windows (x86-64), and macOS (universal). Linux and Windows are built locally; macOS is built by GitHub Actions because it needs Xcode and can't be cross-compiled from Linux.
+This project ships three platforms: Linux (x86-64), Windows (x86-64), and macOS (universal). Linux is built locally (distrobox, ~4s); Windows and macOS are built by GitHub Actions (macOS can't be cross-compiled from Linux, and CI Windows is reliable + fast so there's no reason to install mingw locally).
 
 The final release is assembled manually with `gh release create` so partial CI failures can't publish a half-release.
 
@@ -11,10 +11,6 @@ The final release is assembled manually with `gh release create` so partial CI f
   distrobox create -i ghcr.io/ublue-os/fedora-toolbox:latest -n fedora
   distrobox enter fedora -- sudo dnf install -y webkit2gtk4.1-devel gtk3-devel gcc pkg-config nodejs
   distrobox enter fedora -- go install github.com/wailsapp/wails/v2/cmd/wails@latest
-  ```
-- For Windows cross-compile (optional — skip if you don't plan to build Windows locally):
-  ```bash
-  distrobox enter fedora -- sudo dnf install -y mingw64-gcc mingw64-gcc-c++
   ```
 - `gh` CLI on the host, authenticated as someone with push rights to `waveheadreport/genetica-resolutio`.
 
@@ -38,43 +34,31 @@ tar -czf /tmp/artifacts/genetica-resolutio-linux-amd64.tar.gz \
     -C build/bin genetica-resolutio-linux-amd64
 ```
 
-### 3. Build Windows (cross-compile, optional)
+### 3. Build macOS + Windows (via CI)
 
-```bash
-distrobox enter fedora -- bash -lc '
-  cd ~/Downloads/genetica-resolutio-desktop &&
-  CC=x86_64-w64-mingw32-gcc PATH=$HOME/go/bin:$PATH \
-    wails build -platform windows/amd64 -o genetica-resolutio-windows-amd64.exe
-'
-(cd build/bin && zip /tmp/artifacts/genetica-resolutio-windows-amd64.zip genetica-resolutio-windows-amd64.exe)
-```
-
-If you don't have mingw set up, skip this step — the release can ship without Windows, or you can use `workflow_dispatch` later to add a Windows CI job.
-
-### 4. Build macOS (via CI)
-
-Push a version tag. This triggers `.github/workflows/release.yml` which runs on `macos-latest` and uploads a single artifact named `macos-build`.
+Push a version tag. This triggers `.github/workflows/release.yml`, which runs `build-macos` on `macos-latest` and `build-windows` on `windows-latest` in parallel.
 
 ```bash
 git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-Wait for the run to finish (typically ~3 min), then pull the artifact:
+Wait for the run to finish (typically ~3 min), then pull both artifacts:
 
 ```bash
 RUN_ID=$(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')
 gh run watch $RUN_ID --exit-status
-gh run download $RUN_ID -n macos-build -D /tmp/artifacts
+gh run download $RUN_ID -n macos-build   -D /tmp/artifacts
+gh run download $RUN_ID -n windows-build -D /tmp/artifacts
 ```
 
-### 5. Generate checksums
+### 4. Generate checksums
 
 ```bash
 cd /tmp/artifacts && sha256sum *.tar.gz *.zip | sort > SHA256SUMS.txt
 ```
 
-### 6. Publish the release
+### 5. Publish the release
 
 ```bash
 gh release create vX.Y.Z \
