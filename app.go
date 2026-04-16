@@ -43,7 +43,7 @@ func (a *App) OpenFileDialog() (string, error) {
 	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: "Select your raw DNA file",
 		Filters: []runtime.FileFilter{
-			{DisplayName: "DNA Files (*.txt, *.csv, *.tsv, *.gz)", Pattern: "*.txt;*.csv;*.tsv;*.gz"},
+			{DisplayName: "DNA Files (*.txt, *.csv, *.tsv, *.vcf, *.gz)", Pattern: "*.txt;*.csv;*.tsv;*.vcf;*.gz"},
 			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
 		},
 	})
