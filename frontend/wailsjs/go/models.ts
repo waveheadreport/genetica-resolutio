@@ -140,6 +140,8 @@ export namespace backend {
 	    provider: string;
 	    totalSNPs: number;
 	    snps: Record<string, Array<string>>;
+	    refBuild: string;
+	    unresolvedSNPs: Record<string, Array<string>>;
 	
 	    static createFrom(source: any = {}) {
 	        return new ParseResult(source);
@@ -150,6 +152,8 @@ export namespace backend {
 	        this.provider = source["provider"];
 	        this.totalSNPs = source["totalSNPs"];
 	        this.snps = source["snps"];
+	        this.refBuild = source["refBuild"];
+	        this.unresolvedSNPs = source["unresolvedSNPs"];
 	    }
 	}
 	export class AnalysisResult {

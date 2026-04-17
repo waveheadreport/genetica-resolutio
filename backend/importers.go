@@ -166,6 +166,7 @@ func ImportClinVar(ctx context.Context, filePath string, fn ProgressFn) (int, er
 	scanner.Buffer(buf, cap(buf))
 
 	var batch []SNPRecord
+	var posBatch []PosEntry
 	total := 0
 	lineNo := 0
 
@@ -187,8 +188,12 @@ func ImportClinVar(ctx context.Context, filePath string, fn ProgressFn) (int, er
 			if err := BulkInsertSNPs(batch, "clinvar"); err != nil {
 				return total, err
 			}
+			if err := BulkInsertPositionalIndex(posBatch); err != nil {
+				return total, err
+			}
 			total += len(batch)
 			batch = batch[:0]
+			posBatch = posBatch[:0]
 		}
 
 		fields := strings.Split(line, "\t")
@@ -197,20 +202,18 @@ func ImportClinVar(ctx context.Context, filePath string, fn ProgressFn) (int, er
 		}
 
 		chrom := strings.TrimPrefix(fields[0], "chr")
-		// vcfID field may contain rsID
+		pos := fields[1]
 		vcfID := fields[2]
 		ref := strings.ToUpper(fields[3])
 		alt := strings.ToUpper(fields[4])
 		info := fields[7]
 
-		// Only process SNVs
 		if len(ref) != 1 || len(alt) != 1 {
 			continue
 		}
 
 		infoMap := parseVCFInfo(info)
 
-		// Get rsID: prefer RS= tag in INFO, fall back to ID field
 		rsid := ""
 		if rs, ok := infoMap["RS"]; ok {
 			rsid = "rs" + rs
@@ -221,11 +224,17 @@ func ImportClinVar(ctx context.Context, filePath string, fn ProgressFn) (int, er
 			continue
 		}
 
+		posBatch = append(posBatch, PosEntry{
+			Build: "GRCh38",
+			Chrom: chrom,
+			Pos:   pos,
+			RSID:  strings.ToLower(rsid),
+		})
+
 		clnsig := infoMap["CLNSIG"]
 		clndn  := infoMap["CLNDN"]
 		gene   := ""
 		if gi, ok := infoMap["GENEINFO"]; ok {
-			// GENEINFO = "GENE:GENEID|..."
 			if i := strings.Index(gi, ":"); i > 0 {
 				gene = gi[:i]
 			}
@@ -239,7 +248,7 @@ func ImportClinVar(ctx context.Context, filePath string, fn ProgressFn) (int, er
 
 		riskLevel := clinSigToRiskLevel(clnsig)
 		if riskLevel == "" {
-			continue // benign/likely benign — skip
+			continue
 		}
 
 		batch = append(batch, SNPRecord{
@@ -261,6 +270,11 @@ func ImportClinVar(ctx context.Context, filePath string, fn ProgressFn) (int, er
 			return total, err
 		}
 		total += len(batch)
+	}
+	if len(posBatch) > 0 {
+		if err := BulkInsertPositionalIndex(posBatch); err != nil {
+			return total, err
+		}
 	}
 
 	return total, scanner.Err()
@@ -419,6 +433,7 @@ func ImportdbSNP(ctx context.Context, filePath string, fn ProgressFn) (int, erro
 	scanner.Buffer(buf, cap(buf))
 
 	var batch []SNPRecord
+	var posBatch []PosEntry
 	total := 0
 	lineNo := 0
 
@@ -440,8 +455,12 @@ func ImportdbSNP(ctx context.Context, filePath string, fn ProgressFn) (int, erro
 			if err := BulkInsertSNPs(batch, "dbsnp"); err != nil {
 				return total, err
 			}
+			if err := BulkInsertPositionalIndex(posBatch); err != nil {
+				return total, err
+			}
 			total += len(batch)
 			batch = batch[:0]
+			posBatch = posBatch[:0]
 		}
 
 		fields := strings.Split(line, "\t")
@@ -449,6 +468,8 @@ func ImportdbSNP(ctx context.Context, filePath string, fn ProgressFn) (int, erro
 			continue
 		}
 
+		chrom := strings.TrimPrefix(fields[0], "chr")
+		pos := fields[1]
 		vcfID := fields[2]
 		if !strings.HasPrefix(strings.ToLower(vcfID), "rs") {
 			continue
@@ -461,13 +482,19 @@ func ImportdbSNP(ctx context.Context, filePath string, fn ProgressFn) (int, erro
 		ref := strings.ToUpper(fields[3])
 		alt := strings.ToUpper(fields[4])
 		if len(ref) != 1 || len(alt) != 1 {
-			continue // SNVs only
+			continue
 		}
+
+		posBatch = append(posBatch, PosEntry{
+			Build: "GRCh38",
+			Chrom: chrom,
+			Pos:   pos,
+			RSID:  rsid,
+		})
 
 		info := fields[7]
 		infoMap := parseVCFInfo(info)
 
-		// Only keep variants with clinical annotations
 		clnsig, hasCLN := infoMap["CLNSIG"]
 		clndn  := infoMap["CLNDN"]
 		if !hasCLN || clnsig == "" {
@@ -495,7 +522,7 @@ func ImportdbSNP(ctx context.Context, filePath string, fn ProgressFn) (int, erro
 		batch = append(batch, SNPRecord{
 			RSID:       rsid,
 			Gene:       gene,
-			Chrom:      strings.TrimPrefix(fields[0], "chr"),
+			Chrom:      chrom,
 			Category:   "disease_risk",
 			SubCat:     "dbsnp_clinical",
 			RiskAllele: alt,
@@ -511,6 +538,11 @@ func ImportdbSNP(ctx context.Context, filePath string, fn ProgressFn) (int, erro
 			return total, err
 		}
 		total += len(batch)
+	}
+	if len(posBatch) > 0 {
+		if err := BulkInsertPositionalIndex(posBatch); err != nil {
+			return total, err
+		}
 	}
 
 	return total, scanner.Err()

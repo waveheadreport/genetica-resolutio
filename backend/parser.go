@@ -14,13 +14,20 @@ import (
 var rsidRe = regexp.MustCompile(`^rs\d+$`)
 var alleleRe = regexp.MustCompile(`^[ATCG]$`)
 var infoRsIDRe = regexp.MustCompile(`(?:^|;)rsID=(rs\d+)`)
+var infoRSNumRe = regexp.MustCompile(`(?:^|;)RS=(\d+)(?:;|$)`)
+var infoDbSNPRe = regexp.MustCompile(`(?:^|;)(?:dbSNP_RS|RSID|dbsnp)=(rs\d+)`)
 
 func extractRsIDFromInfo(info string) string {
-	m := infoRsIDRe.FindStringSubmatch(info)
-	if m == nil {
-		return ""
+	if m := infoRsIDRe.FindStringSubmatch(info); m != nil {
+		return strings.ToLower(m[1])
 	}
-	return strings.ToLower(m[1])
+	if m := infoRSNumRe.FindStringSubmatch(info); m != nil {
+		return "rs" + m[1]
+	}
+	if m := infoDbSNPRe.FindStringSubmatch(info); m != nil {
+		return strings.ToLower(m[1])
+	}
+	return ""
 }
 
 func gtToNuc(idx string, allNucs []string) string {
@@ -60,15 +67,48 @@ func ParseDNAFile(path string) (*ParseResult, error) {
 	return parseReader(reader)
 }
 
+func detectRefBuild(line string) string {
+	lower := strings.ToLower(line)
+	if strings.Contains(lower, "grch38") || strings.Contains(lower, "hg38") ||
+		strings.Contains(lower, "genome.fa") && strings.Contains(lower, "38") {
+		return "GRCh38"
+	}
+	if strings.Contains(lower, "grch37") || strings.Contains(lower, "hg19") ||
+		strings.Contains(lower, "b37") || strings.Contains(lower, "genome.fa") && strings.Contains(lower, "37") {
+		return "GRCh37"
+	}
+	return ""
+}
+
+func lookupByPosition(chrom, pos, build string) string {
+	chrom = strings.TrimPrefix(strings.TrimPrefix(chrom, "chr"), "Chr")
+	key := chrom + ":" + pos
+	builds := []string{build}
+	if build == "" {
+		builds = []string{"GRCh38", "GRCh37"}
+	}
+	for _, b := range builds {
+		if m, ok := posToRSID[b]; ok {
+			if rsid, ok := m[key]; ok {
+				return rsid
+			}
+		}
+	}
+	return ""
+}
+
 func parseReader(r io.Reader) (*ParseResult, error) {
 	result := &ParseResult{
-		Provider: "Unknown",
-		SNPs:     make(map[string][2]string),
+		Provider:       "Unknown",
+		SNPs:           make(map[string][2]string),
+		UnresolvedSNPs: make(map[string][2]string),
 	}
 
+	refBuild := ""
+
 	scanner := bufio.NewScanner(r)
-	// 10 MB buffer for very large lines (some providers have long headers)
-	buf := make([]byte, 10*1024*1024)
+	// 64 MB buffer — multi-sample VCFs can have thousands of columns per line
+	buf := make([]byte, 64*1024*1024)
 	scanner.Buffer(buf, cap(buf))
 
 	for scanner.Scan() {
@@ -77,9 +117,14 @@ func parseReader(r io.Reader) (*ParseResult, error) {
 			continue
 		}
 
-		// Comment/header lines: detect provider, skip
+		// Comment/header lines: detect provider and reference build, skip
 		if strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
 			lower := strings.ToLower(line)
+			if refBuild == "" {
+				if b := detectRefBuild(line); b != "" {
+					refBuild = b
+				}
+			}
 			switch {
 			case strings.HasPrefix(lower, "##fileformat=vcf"):
 				result.Provider = "VCF"
@@ -110,7 +155,7 @@ func parseReader(r io.Reader) (*ParseResult, error) {
 
 		parts := strings.Split(line, "\t")
 
-		// VCF format: CHROM POS ID REF ALT QUAL FILTER INFO FORMAT SAMPLE
+		// VCF format: CHROM POS ID REF ALT QUAL FILTER INFO FORMAT SAMPLE...
 		// Must come before generic tab checks since VCF also has 10+ tab fields.
 		if len(parts) >= 10 {
 			formatCols := strings.Split(parts[8], ":")
@@ -124,21 +169,35 @@ func parseReader(r io.Reader) (*ParseResult, error) {
 			if hasGT {
 				rsid := strings.ToLower(strings.TrimSpace(parts[2]))
 				if !rsidRe.MatchString(rsid) {
-					rsid = extractRsIDFromInfo(parts[7])
-					if rsid == "" {
-						continue
+					// Column 3 may hold semicolon-separated IDs (v4.2)
+					for _, tok := range strings.Split(rsid, ";") {
+						tok = strings.TrimSpace(tok)
+						if rsidRe.MatchString(tok) {
+							rsid = tok
+							break
+						}
+					}
+					if !rsidRe.MatchString(rsid) {
+						rsid = extractRsIDFromInfo(parts[7])
+					}
+					if !rsidRe.MatchString(rsid) {
+						rsid = lookupByPosition(parts[0], parts[1], refBuild)
 					}
 				}
+				unresolvedPos := !rsidRe.MatchString(rsid)
+
 				ref := strings.ToUpper(strings.TrimSpace(parts[3]))
-				if !alleleRe.MatchString(ref) {
+				if len(ref) != 1 || !alleleRe.MatchString(ref) {
 					continue
 				}
 				altField := strings.TrimSpace(parts[4])
-				if altField == "." {
+				if altField == "." || altField == "" {
 					continue
 				}
 				altAlleles := strings.Split(strings.ToUpper(altField), ",")
-				allNucs := append([]string{ref}, altAlleles...)
+				allNucs := make([]string, 0, len(altAlleles)+1)
+				allNucs = append(allNucs, ref)
+				allNucs = append(allNucs, altAlleles...)
 
 				sample := strings.Split(parts[9], ":")
 				gt := ""
@@ -150,9 +209,9 @@ func parseReader(r io.Reader) (*ParseResult, error) {
 					}
 				}
 				if gtIdx >= 0 && gtIdx < len(sample) {
-					gt = sample[gtIdx]
+					gt = strings.TrimSpace(sample[gtIdx])
 				}
-				if gt == "" || gt == "." || gt == "./." {
+				if gt == "" || gt == "." || gt == "./." || gt == ".|." {
 					continue
 				}
 				gt = strings.ReplaceAll(gt, "|", "/")
@@ -162,8 +221,17 @@ func parseReader(r io.Reader) (*ParseResult, error) {
 				}
 				a1 := gtToNuc(alleles[0], allNucs)
 				a2 := gtToNuc(alleles[1], allNucs)
+				if a1 == "" || a2 == "" {
+					continue
+				}
 				if alleleRe.MatchString(a1) && alleleRe.MatchString(a2) {
-					result.SNPs[rsid] = [2]string{a1, a2}
+					if unresolvedPos {
+						chrom := strings.TrimPrefix(strings.TrimPrefix(parts[0], "chr"), "Chr")
+						posKey := chrom + ":" + parts[1]
+						result.UnresolvedSNPs[posKey] = [2]string{a1, a2}
+					} else {
+						result.SNPs[rsid] = [2]string{a1, a2}
+					}
 				}
 				continue
 			}
@@ -222,10 +290,11 @@ func parseReader(r io.Reader) (*ParseResult, error) {
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
+	if err := scanner.Err(); err != nil && len(result.SNPs) == 0 {
 		return nil, err
 	}
 
 	result.TotalSNPs = len(result.SNPs)
+	result.RefBuild = refBuild
 	return result, nil
 }

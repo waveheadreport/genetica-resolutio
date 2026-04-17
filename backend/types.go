@@ -26,9 +26,11 @@ type DBStats struct {
 
 // ParseResult is the output of parsing a raw DNA file.
 type ParseResult struct {
-	Provider   string            `json:"provider"`
-	TotalSNPs  int               `json:"totalSNPs"`
-	SNPs       map[string][2]string `json:"snps"` // rsid → [a1, a2]
+	Provider       string               `json:"provider"`
+	TotalSNPs      int                  `json:"totalSNPs"`
+	SNPs           map[string][2]string  `json:"snps"`           // rsid → [a1, a2]
+	RefBuild       string               `json:"refBuild"`        // "GRCh37" or "GRCh38" if detected
+	UnresolvedSNPs map[string][2]string  `json:"unresolvedSNPs"` // "chrom:pos" → [a1, a2] for VCF variants with no rsID
 }
 
 // Finding is a matched SNP with interpreted genotype status.

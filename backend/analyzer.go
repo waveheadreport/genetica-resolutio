@@ -123,20 +123,40 @@ func RunAnalysis(parsed *ParseResult) *AnalysisResult {
 		}
 	}
 
-	// ── Pass 2: SQLite databases (if any are installed) ─────────────────
+	// ── Pass 2: downloaded databases (if any are installed) ─────────────
 	if KV != nil {
 		for rsid, alleles := range parsed.SNPs {
-			// Skip rsIDs already fully covered by curated map
-			// (we still check SQLite in case it has additional traits)
 			sqlRecords, err := QuerySNPsByRSID(rsid)
 			if err != nil || len(sqlRecords) == 0 {
 				continue
 			}
-			// If this rsid wasn't in the curated DB, count it as a new match
 			if _, inCurated := DB[rsid]; !inCurated {
 				matched++
 			}
 			for _, rec := range sqlRecords {
+				addFinding(rec, alleles[0], alleles[1])
+			}
+		}
+
+		// ── Pass 3: positional lookup for VCF variants with no rsID ─────
+		for posKey, alleles := range parsed.UnresolvedSNPs {
+			parts := strings.SplitN(posKey, ":", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			rsid, err := QueryRSIDByPosition(parts[0], parts[1], parsed.RefBuild)
+			if err != nil || rsid == "" {
+				continue
+			}
+			if _, already := parsed.SNPs[rsid]; already {
+				continue
+			}
+			records, err := QuerySNPsByRSID(rsid)
+			if err != nil || len(records) == 0 {
+				continue
+			}
+			matched++
+			for _, rec := range records {
 				addFinding(rec, alleles[0], alleles[1])
 			}
 		}

@@ -28,6 +28,7 @@ import (
 var KV *bolt.DB
 
 const metaBucket = "meta"
+const posBucket = "pos"
 
 // DBPath returns the filesystem path for the local reference database.
 func DBPath() (string, error) {
@@ -70,7 +71,10 @@ func CloseKV() error {
 
 func initSchema() error {
 	return KV.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists([]byte(metaBucket))
+		if _, err := tx.CreateBucketIfNotExists([]byte(metaBucket)); err != nil {
+			return err
+		}
+		_, err := tx.CreateBucketIfNotExists([]byte(posBucket))
 		return err
 	})
 }
@@ -117,6 +121,72 @@ func QuerySNPsByRSID(rsid string) ([]SNPRecord, error) {
 		})
 	})
 	return out, err
+}
+
+// PosEntry maps a genomic position to an rsID for one reference build.
+type PosEntry struct {
+	Build string
+	Chrom string
+	Pos   string
+	RSID  string
+}
+
+func makePosKey(build, chrom, pos string) []byte {
+	return []byte(build + ":" + chrom + ":" + pos)
+}
+
+// BulkInsertPositionalIndex writes chr:pos → rsID mappings into the positional
+// index bucket. These are additive — a given genomic position always maps to the
+// same rsID regardless of which database reported it.
+func BulkInsertPositionalIndex(entries []PosEntry) error {
+	if KV == nil {
+		return fmt.Errorf("database not open")
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	return KV.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(posBucket))
+		if b == nil {
+			return fmt.Errorf("pos bucket missing")
+		}
+		for _, e := range entries {
+			key := makePosKey(e.Build, e.Chrom, e.Pos)
+			if err := b.Put(key, []byte(e.RSID)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// QueryRSIDByPosition looks up an rsID from the positional index.
+// If build is empty, tries GRCh38 then GRCh37.
+func QueryRSIDByPosition(chrom, pos, build string) (string, error) {
+	if KV == nil {
+		return "", nil
+	}
+	chrom = strings.TrimPrefix(strings.TrimPrefix(chrom, "chr"), "Chr")
+	builds := []string{build}
+	if build == "" {
+		builds = []string{"GRCh38", "GRCh37"}
+	}
+	var rsid string
+	err := KV.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(posBucket))
+		if b == nil {
+			return nil
+		}
+		for _, bld := range builds {
+			key := makePosKey(bld, chrom, pos)
+			if v := b.Get(key); v != nil {
+				rsid = string(v)
+				return nil
+			}
+		}
+		return nil
+	})
+	return rsid, err
 }
 
 // BulkInsertSNPs writes a batch of records into the given source's bucket.
