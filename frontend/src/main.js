@@ -1800,7 +1800,7 @@ function toCSV(rows) {
   return lines.join('\n');
 }
 // ── ABOUT MODAL ──────────────────────────────────────────────────────────────
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.0.2';
 function showAboutModal() {
   const existing = document.getElementById('about-modal');
   if (existing) { existing.remove(); return; }

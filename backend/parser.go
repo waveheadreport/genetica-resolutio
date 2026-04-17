@@ -7,11 +7,32 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
 var rsidRe = regexp.MustCompile(`^rs\d+$`)
 var alleleRe = regexp.MustCompile(`^[ATCG]$`)
+var infoRsIDRe = regexp.MustCompile(`(?:^|;)rsID=(rs\d+)`)
+
+func extractRsIDFromInfo(info string) string {
+	m := infoRsIDRe.FindStringSubmatch(info)
+	if m == nil {
+		return ""
+	}
+	return strings.ToLower(m[1])
+}
+
+func gtToNuc(idx string, allNucs []string) string {
+	if idx == "." {
+		return ""
+	}
+	i, err := strconv.Atoi(idx)
+	if err != nil || i < 0 || i >= len(allNucs) {
+		return ""
+	}
+	return allNucs[i]
+}
 
 // ParseDNAFile reads a raw DNA export file and returns a ParseResult.
 // Supports: 23andMe, AncestryDNA, MyHeritage, FamilyTreeDNA, LivingDNA (tab/csv).
@@ -60,6 +81,8 @@ func parseReader(r io.Reader) (*ParseResult, error) {
 		if strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
 			lower := strings.ToLower(line)
 			switch {
+			case strings.HasPrefix(lower, "##fileformat=vcf"):
+				result.Provider = "VCF"
 			case strings.Contains(lower, "ancestrydna"):
 				result.Provider = "AncestryDNA"
 			case strings.Contains(lower, "23andme"):
@@ -85,8 +108,66 @@ func parseReader(r io.Reader) (*ParseResult, error) {
 			continue
 		}
 
-		// Try tab-delimited first (23andMe, AncestryDNA, most providers)
 		parts := strings.Split(line, "\t")
+
+		// VCF format: CHROM POS ID REF ALT QUAL FILTER INFO FORMAT SAMPLE
+		// Must come before generic tab checks since VCF also has 10+ tab fields.
+		if len(parts) >= 10 {
+			formatCols := strings.Split(parts[8], ":")
+			hasGT := false
+			for _, f := range formatCols {
+				if f == "GT" {
+					hasGT = true
+					break
+				}
+			}
+			if hasGT {
+				rsid := strings.ToLower(strings.TrimSpace(parts[2]))
+				if !rsidRe.MatchString(rsid) {
+					rsid = extractRsIDFromInfo(parts[7])
+					if rsid == "" {
+						continue
+					}
+				}
+				ref := strings.ToUpper(strings.TrimSpace(parts[3]))
+				if !alleleRe.MatchString(ref) {
+					continue
+				}
+				altField := strings.TrimSpace(parts[4])
+				if altField == "." {
+					continue
+				}
+				altAlleles := strings.Split(strings.ToUpper(altField), ",")
+				allNucs := append([]string{ref}, altAlleles...)
+
+				sample := strings.Split(parts[9], ":")
+				gt := ""
+				gtIdx := -1
+				for i, f := range formatCols {
+					if f == "GT" {
+						gtIdx = i
+						break
+					}
+				}
+				if gtIdx >= 0 && gtIdx < len(sample) {
+					gt = sample[gtIdx]
+				}
+				if gt == "" || gt == "." || gt == "./." {
+					continue
+				}
+				gt = strings.ReplaceAll(gt, "|", "/")
+				alleles := strings.Split(gt, "/")
+				if len(alleles) != 2 {
+					continue
+				}
+				a1 := gtToNuc(alleles[0], allNucs)
+				a2 := gtToNuc(alleles[1], allNucs)
+				if alleleRe.MatchString(a1) && alleleRe.MatchString(a2) {
+					result.SNPs[rsid] = [2]string{a1, a2}
+				}
+				continue
+			}
+		}
 
 		if len(parts) >= 5 {
 			// AncestryDNA: rsid, chr, pos, allele1, allele2
@@ -138,45 +219,6 @@ func parseReader(r io.Reader) (*ParseResult, error) {
 				}
 			}
 			continue
-		}
-
-		// VCF format: CHROM POS ID REF ALT QUAL FILTER INFO FORMAT SAMPLE
-		if len(parts) >= 10 && !strings.HasPrefix(parts[0], "#") {
-			rsid := strings.ToLower(strings.TrimSpace(parts[2]))
-			if !rsidRe.MatchString(rsid) {
-				continue
-			}
-			ref := strings.ToUpper(strings.TrimSpace(parts[3]))
-			alt := strings.ToUpper(strings.TrimSpace(parts[4]))
-			// Only handle simple single-nucleotide variants
-			if len(ref) == 1 && len(alt) == 1 &&
-				alleleRe.MatchString(ref) && alleleRe.MatchString(alt) {
-				// Parse GT from sample column (format: GT:..., sample: 0/1:...)
-				format := strings.Split(parts[8], ":")
-				sample := strings.Split(parts[9], ":")
-				gt := "0/0"
-				for i, f := range format {
-					if f == "GT" && i < len(sample) {
-						gt = sample[i]
-						break
-					}
-				}
-				gt = strings.ReplaceAll(gt, "|", "/")
-				alleles := strings.Split(gt, "/")
-				if len(alleles) == 2 {
-					toNuc := func(idx string) string {
-						if idx == "0" {
-							return ref
-						}
-						return alt
-					}
-					a1 := toNuc(alleles[0])
-					a2 := toNuc(alleles[1])
-					if alleleRe.MatchString(a1) && alleleRe.MatchString(a2) {
-						result.SNPs[rsid] = [2]string{a1, a2}
-					}
-				}
-			}
 		}
 	}
 
