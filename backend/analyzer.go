@@ -155,6 +155,7 @@ func RunAnalysis(parsed *ParseResult) *AnalysisResult {
 			if err != nil || len(records) == 0 {
 				continue
 			}
+			parsed.SNPs[rsid] = alleles
 			matched++
 			for _, rec := range records {
 				addFinding(rec, alleles[0], alleles[1])
@@ -162,6 +163,7 @@ func RunAnalysis(parsed *ParseResult) *AnalysisResult {
 		}
 	}
 
+	parsed.TotalSNPs = len(parsed.SNPs)
 	actionPlan := BuildActionPlan(summary, categories)
 	doctorText := buildDoctorText(parsed, matched, summary)
 
