@@ -72,12 +72,10 @@ func RunAnalysis(parsed *ParseResult) *AnalysisResult {
 	categories := make(map[string][]Finding)
 	summary := Summary{}
 
-	// dedup key: rsid+trait to avoid showing the same finding twice
-	// when both the curated DB and a downloaded DB cover the same SNP
 	seen := make(map[string]bool)
 
 	addFinding := func(rec SNPRecord, a1, a2 string) {
-		key := rec.RSID + "|" + rec.Trait
+		key := rec.RSID + "|" + rec.Category
 		if seen[key] {
 			return
 		}
