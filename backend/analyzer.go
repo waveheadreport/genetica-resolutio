@@ -26,11 +26,11 @@ func GetDBStats() DBStats {
 			stats.ByCategory[r.Category]++
 		}
 	}
-	// Add SQLite counts if available
 	if sqlCounts, err := SQLiteDBStats(); err == nil {
 		for src, n := range sqlCounts {
 			stats.ByCategory["db:"+src] += n
 			stats.TotalRecords += n
+			stats.TotalSNPs += n
 		}
 	}
 	return stats
@@ -184,11 +184,7 @@ func buildDoctorText(parsed *ParseResult, matched int, summary Summary) string {
 
 	sb.WriteString(fmt.Sprintf("HIGH-PRIORITY FINDINGS (%d):\n", len(summary.High)))
 	for _, f := range summary.High {
-		effect := f.Effect
-		if len(effect) > 120 {
-			effect = effect[:120] + "..."
-		}
-		sb.WriteString(fmt.Sprintf("• %s (%s) — %s: %s\n", f.Gene, f.RSID, f.Trait, effect))
+		sb.WriteString(fmt.Sprintf("• %s (%s) — %s: %s\n", f.Gene, f.RSID, f.Trait, f.Effect))
 	}
 
 	sb.WriteString(fmt.Sprintf("\nMODERATE FINDINGS (%d):\n", len(summary.Moderate)))
